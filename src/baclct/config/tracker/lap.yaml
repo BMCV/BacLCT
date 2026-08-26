@@ -1,0 +1,15 @@
+_target_: baclct.tracking.tracker.LAPTracker
+
+dataset: ???
+predictions: ???
+
+max_division_targets: 2
+norm_fn: sigmoid
+thr_corr: 0.65
+thr_div: 0.3
+ignore_negative_edges: true
+relabel_single_daughter_divs: false
+edge_direction: both
+
+segmentation_correction:
+  - _target_: baclct.tracking.segmentation_correction.SegmentationCorrector

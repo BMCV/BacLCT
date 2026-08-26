@@ -1,0 +1,11 @@
+defaults:
+  - _base
+
+devices: auto
+
+strategy:
+  _target_: lightning.pytorch.strategies.DDPStrategy
+  timeout:
+    _target_: datetime.timedelta
+    minutes: 10
+  find_unused_parameters: false

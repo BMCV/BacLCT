@@ -1,0 +1,16 @@
+# @package _global_
+
+defaults:
+  - override /dataset: spores
+  - override /task: tracking_with_states
+
+model:
+  graph_model:
+    reattach_initial_nodes: false
+    reattach_initial_edges: false
+    num_layers: 0
+
+data:
+  graph_num_steps: 1
+
+experiment_name: no_message_passing

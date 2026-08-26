@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+  - override /dataset: spores
+  - override /task: tracking_with_states
+  - override /features/handcrafted: no_handcrafted
+  - override /model/graph_model/node_encoder: deep
+
+experiment_name: no_handcrafted

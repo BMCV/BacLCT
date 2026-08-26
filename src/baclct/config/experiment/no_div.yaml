@@ -1,0 +1,7 @@
+# @package _global_
+
+defaults:
+  - override /dataset: spores
+  - override /task: tracking_with_states_no_div
+
+experiment_name: no_div

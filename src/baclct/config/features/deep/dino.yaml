@@ -1,0 +1,22 @@
+defaults:
+  - dino_masked_enc
+
+_target_: baclct.features.extractors.CellLevelExtractor
+
+device: ${device}
+
+center_name: center
+
+# other options: ("bbox", 2), median_size, 128, ${estimated_size}
+input_size_img: bbox
+input_size_enc: 224
+batch_size: 256
+
+# workers crop, resize and weight patches while the encoder runs
+num_workers: 4
+cells_per_item: 128
+prefetch_factor: 2
+
+verbose: true
+
+normalize_for_pretrained: true

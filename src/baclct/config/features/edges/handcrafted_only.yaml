@@ -1,0 +1,6 @@
+defaults:
+  - _base
+
+# no cosine similarity since this requires DINO
+feature_names:
+  ["dist_temp", "dist_spat", "overlap", "iou", "relative_size", "intensity_mean_diff"]

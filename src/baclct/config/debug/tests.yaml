@@ -1,0 +1,33 @@
+# @package _global_
+
+defaults:
+  - val
+  - override /hydra: tests
+
+data:
+  # must be < 4 (toy data has 4 frames) or test_config_variant_runs produces zero train
+  # batches since incomplete batches are dropped by default
+  batch_size: 2
+  batch_size_val: 2
+  use_patches: false
+
+  graph_time_step: 1
+  graph_num_steps: 1
+
+  handcrafted_feature_extractor:
+    n_jobs: 1
+
+  edge_finder:
+    n_jobs: 1
+
+trainer:
+  accelerator: auto
+  devices: 1
+
+  limit_train_batches: 1
+  limit_val_batches: 1
+
+  min_epochs: 1
+  max_epochs: 2
+
+device: null

@@ -1,0 +1,11 @@
+encoder:
+  _target_: baclct.models.encoder.MaskedDINOEncoder
+
+  token: k
+  background_gamma: 2
+
+  size: b
+  patchsize: 16
+  version: 1
+
+  foreground_only: false

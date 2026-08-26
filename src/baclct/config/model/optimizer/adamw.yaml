@@ -1,0 +1,5 @@
+_target_: torch.optim.AdamW
+_partial_: true
+
+weight_decay: 3e-5 # default: 0.01
+# don't configure lr here

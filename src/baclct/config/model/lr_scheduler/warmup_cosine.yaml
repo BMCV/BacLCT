@@ -1,0 +1,7 @@
+_target_: baclct.utils.model.get_warmup_cosine_scheduler
+_partial_: true
+
+warmup_epochs: 10
+start_factor: 0.01
+max_epochs: ${trainer.max_epochs}
+min_lr: 1e-6

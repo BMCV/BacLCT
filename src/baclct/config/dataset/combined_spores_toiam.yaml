@@ -1,0 +1,54 @@
+# @package _global_
+
+data:
+  precompute_edges: true
+  segmentation_name: GT
+  data_format: ctc
+  img_name: null
+
+  graph_search_radius: 150
+  graph_time_step: 1
+  graph_num_steps: 3
+  graph_fov_size: 1.0
+  graph_edge_dropout: 0.3
+  graph_node_dropout: 0.3
+  graph_frame_dropout: 0.1
+  graph_max_num_edges: 125000
+  graph_connectivity: star
+
+  batch_size: 4
+  use_patches: true
+  patch_size: 128
+  patch_overlap: 0.25
+
+  stride_val: 32
+
+  num_workers: 8
+  num_workers_val: 8
+
+  lazy: true
+
+  sampling_alpha: 0.5
+  sampling_floor: 0.05 # spores contributes many short sequences
+  sampling_size_measure: cells
+
+hidden_dim: 128
+model:
+  graph_model:
+    hidden_node_dim: ${hidden_dim}
+    hidden_edge_dim: ${hidden_dim}
+    dropout: 0.1
+
+trainer:
+  limit_train_batches: 400
+  max_epochs: 360
+
+  devices: 1
+
+dataset_name: combined_spores_toiam
+included_datasets:
+  - spores
+  - toiam
+
+num_edge_classes: 3
+num_node_classes: null

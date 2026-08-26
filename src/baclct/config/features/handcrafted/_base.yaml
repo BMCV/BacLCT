@@ -1,0 +1,22 @@
+_target_: baclct.features.extractors.HandcraftedExtractor
+
+props:
+  [
+    "area",
+    "axis_major_length",
+    "axis_minor_length",
+    "intensity_mean",
+    "intensity_min",
+    "intensity_max",
+    "eccentricity",
+    "solidity",
+    "orientation",
+  ]
+extra_props: ["center_local", "thickness"]
+extra_transforms: ["aspect_ratio"]
+feature_names:
+  ["area", "aspect_ratio", "intensity", "eccentricity", "solidity", "thickness"]
+feature_norm_fn: scale_relative_size
+
+min_node_area: 32
+n_jobs: -1

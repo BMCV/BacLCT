@@ -1,0 +1,9 @@
+defaults:
+  - override job_logging: stdout
+
+output_subdir: null
+run:
+  dir: .
+sweep:
+  dir: .
+  subdir: .

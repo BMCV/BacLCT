@@ -1,0 +1,8 @@
+# @package _global_
+
+# num_node_classes is configured in the dataset config for node classification, we just
+# normally use that value and for tracking only we mask it
+
+task_name: classification
+task_config_name: tracking_with_states # needed for utils.config.py
+task_configured: true # flag to check that task was configured by user

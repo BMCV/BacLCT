@@ -1,0 +1,22 @@
+# @package _global_
+defaults:
+  - override /tracker: no_div
+
+num_edge_classes: 1
+
+model:
+  graph_model:
+    edge_classifier:
+      channel_list: [-1, "${div:${model.graph_model.hidden_edge_dim}, 2}", 1]
+
+features:
+  edges:
+    treat_divs_as: correspondence
+
+data:
+  edge_finder:
+    treat_divs_as: correspondence
+
+task_name: classification
+task_config_name: tracking_with_states_no_div
+task_configured: true

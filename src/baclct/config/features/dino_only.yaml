@@ -1,0 +1,4 @@
+defaults:
+  - edges: _base
+  - handcrafted: no_handcrafted
+  - deep: dino

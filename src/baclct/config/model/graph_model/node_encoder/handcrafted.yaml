@@ -1,0 +1,16 @@
+defaults:
+  - deep
+
+handcrafted_encoder:
+  _target_: torch_geometric.nn.MLP
+  channel_list:
+    [
+      -1,
+      "${div:${model.graph_model.hidden_node_dim}, 4}",
+      "${div:${model.graph_model.hidden_node_dim}, 2}",
+      "${model.graph_model.hidden_node_dim}",
+    ]
+  dropout: ${model.graph_model.dropout}
+  act: ${model.graph_model.act}
+  norm: ${model.graph_model.norm}
+deep_encoder: null

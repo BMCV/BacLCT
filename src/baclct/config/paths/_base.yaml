@@ -1,0 +1,6 @@
+base_dir: .
+data_dir: ${paths.base_dir}/data/${dataset_name}
+feature_dir: ${paths.base_dir}/features/${dataset_name}
+
+output_dir: ${hydra:runtime.output_dir}
+work_dir: ${hydra:runtime.cwd}

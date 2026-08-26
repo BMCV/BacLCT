@@ -1,0 +1,36 @@
+# Inference-time defaults, merged onto the config a checkpoint was trained with, under any
+# user override. Addressed by name rather than by position in the config tree (see
+# `RUNTIME_KEYS` in utils/config.py for the paths they drive):
+# `BacLCT(model, config_overrides={"num_jobs_features": 4})`. One whose component the
+# model lacks is ignored, so these are safe to set against any checkpoint.
+
+# subgraphs per prediction batch
+batch_size: 1
+
+# by default multi-processing is disabled for broader compatibility, especially with Windows.
+# furthermore, for short sequences, multi-processing can lower throughput. the recommended
+# defaults are commented below the defaults.
+
+# frames whose handcrafted features are extracted in parallel, roughly 0.5 GB per job
+num_jobs_features: 1
+# num_jobs_features: 8
+
+# workers cropping cell patches while the encoder runs. 2 takes about a third off an
+# encode, but a worker re-imports the calling module, which a plain script survives only
+# under an `if __name__ == '__main__':` guard. entry points that have one raise it
+# CHECK: IIRC, workers with "spawn" are not compatible with Jupyter Notebooks on Windows.
+#        Should check if this is still an issue.
+num_workers_encode: 0
+# num_workers_encode: 2
+
+
+# Do Not Change
+
+# dataloader workers during GNN prediction. not worth it when using cached edges, since
+# fetching is cheaper than initializing workers. kept, since on-the-fly edge finding is
+# experimentally supported and requires workers.
+num_workers_predict: 0
+
+# frame pairs whose candidate edges are found in parallel. generally not worth it. kept
+# in for experimental on-the-fly edge finding.
+num_jobs_edges: 1

@@ -1,0 +1,16 @@
+# @package _global_
+
+# num_node_classes is defined by datasets and here we mask it
+num_node_classes: null
+
+model:
+  criterion:
+    node_loss_fn: null
+    node_loss_weight: null
+
+  graph_model:
+    node_classifier: null
+
+task_name: tracking
+task_config_name: tracking # needed for utils.config.py
+task_configured: true # flag to verify that task was configured by user

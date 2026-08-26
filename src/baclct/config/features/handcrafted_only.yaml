@@ -1,0 +1,5 @@
+defaults:
+  - edges: handcrafted_only
+  - handcrafted: _base
+
+deep: null

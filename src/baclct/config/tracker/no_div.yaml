@@ -1,0 +1,11 @@
+# only used for ablations
+
+defaults:
+  - lap
+
+norm_fn: none # binary expansion in tracker already applies sigmoid
+thr_corr: 1.0 # no correspondences at all, skip bipartite matching
+thr_div: 0.6 # must be higher than in other tracker to not have FP
+
+relabel_single_daughter_divs: true
+edge_direction: future

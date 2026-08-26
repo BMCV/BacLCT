@@ -1,0 +1,31 @@
+defaults:
+  - model_checkpoint@model_checkpoint_f1
+  - model_checkpoint@model_checkpoint_interval
+  - model_summary
+  - rich_progress_bar
+  - lr_monitor
+  - _self_
+
+model_checkpoint_f1:
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "epoch={epoch:03d}"
+  monitor: "val/f1_score"
+  mode: "max"
+  save_last: true
+  auto_insert_metric_name: false
+
+model_checkpoint_interval:
+  dirpath: ${paths.output_dir}/checkpoints/interval
+  filename: "{epoch:03d}"
+  every_n_epochs: 1
+  save_top_k: 1
+  monitor: null
+  mode: "min"
+  save_last: false
+
+model_summary:
+  max_depth: -1
+
+lr_monitor:
+  log_momentum: true
+  log_weight_decay: true

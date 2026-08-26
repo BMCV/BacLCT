@@ -1,0 +1,28 @@
+defaults:
+  - data: _base
+  - features: dino_fusion
+  - model: fusion
+
+  - trainer: _base
+  - logger: default
+  - callbacks: default
+
+  - tracker: lap
+
+  - dataset: ???
+  - task: ??? # overrides dataset params
+
+  - paths: _base
+  - hydra: _base
+
+  - _self_
+
+  - debug: null
+  - experiment: null
+
+config_name: ${dataset_name}_${task_name}
+
+seed: 1510
+fold: 0
+
+device: null

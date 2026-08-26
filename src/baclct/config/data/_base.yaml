@@ -1,0 +1,43 @@
+_target_: baclct.data.dataset.TrackingDataset
+
+data_dir: ${paths.data_dir}
+feature_dir: ${paths.feature_dir}
+sequence_ids: ???
+
+edge_finder: ${features.edges}
+handcrafted_feature_extractor: ${features.handcrafted}
+deep_feature_extractor: ${features.deep}
+
+precompute_edges: true
+lazy: true
+trust_cache: false
+
+data_format: ???
+img_name: ???
+segmentation_name: ???
+
+num_workers: 8
+batch_size: 2
+
+# patch tiling is opt-in per dataset: only fields much larger than one graph benefit,
+# so the datasets that use it (toiam) set their own size
+use_patches: false
+patch_size: 128
+patch_overlap: 0.1
+
+sampling_alpha: 0.5
+sampling_floor: 0.02
+sampling_size_measure: frames
+
+graph_search_radius: 250
+graph_time_step: 1
+graph_num_steps: 3
+graph_max_num_edges: 500000
+graph_edge_dropout: 0.0
+graph_node_dropout: 0.3
+graph_frame_dropout: 0.1
+graph_connectivity: dense
+spacing: null
+graph_fov_size: 2.0
+
+fold: ${fold}

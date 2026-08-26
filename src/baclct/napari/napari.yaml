@@ -1,0 +1,20 @@
+name: baclct
+display_name: BacLCT
+
+contributions:
+  commands:
+    - id: baclct.make_tracking_widget
+      title: Track bacteria (BacLCT)
+      python_name: baclct.napari._widget:BacLCTWidget
+    - id: baclct.write_tracks_csv
+      title: Save BacLCT tracks as CSV
+      python_name: baclct.napari._writer:write_tracks_csv
+
+  widgets:
+    - command: baclct.make_tracking_widget
+      display_name: BacLCT
+
+  writers:
+    - command: baclct.write_tracks_csv
+      layer_types: ["tracks"]
+      filename_extensions: [".csv"]

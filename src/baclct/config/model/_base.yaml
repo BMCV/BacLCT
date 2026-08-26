@@ -1,0 +1,11 @@
+defaults:
+  - graph_model: _base
+  - criterion: multitask
+  - optimizer: adamw
+  - lr_scheduler: warmup_cosine_with_restarts
+
+_target_: baclct.models.lightning_model.TrackingModel
+
+lr: 3e-4
+num_edge_classes: ${num_edge_classes}
+num_node_classes: ${num_node_classes}

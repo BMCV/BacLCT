@@ -1,0 +1,196 @@
+[project]
+authors = [
+  { name = "Moritz Kunzmann", email = "moritz.kunzmann@bioquant.uni-heidelberg.de" },
+]
+name = "baclct"
+description = "Bacteria tracking and life cycle state classification using graph neural networks and pretrained vision transformers"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dynamic = ["version"]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["cell tracking", "microscopy", "graph neural network", "napari"]
+classifiers = [
+  "Framework :: napari", # lists the plugin in napari's plugin manager
+]
+dependencies = [
+  "torch>=2.0",
+  "torchvision",
+  "torch_geometric>=2.7",
+  "lightning>=2.5.5",
+  "omegaconf",
+  "hydra-core>=1.3",
+  "hydra-colorlog>=1.2.0",
+
+  "polars>=1.35.0",
+  "rustworkx>=0.17",
+  "dask",
+  "scipy",
+  "scikit-image",
+  "scikit-learn",
+  "fastremap",
+  "networkx",
+  "pyyaml",
+  "tqdm",
+  "tifffile",
+  "pyarrow>=21.0.0",
+
+  "pooch",        # download + cache of the pre-trained models
+  "platformdirs", # user cache directory the models are downloaded into
+]
+
+[project.optional-dependencies]
+train = [
+  "torchmetrics",
+  "tensorboard>=2.20.0",
+  "rich",                  # RichModelSummary + RichProgressBar in the default callbacks
+  "matplotlib",
+  "seaborn",
+  "py_ctcmetrics==1.3.2",
+  "cmap>=0.7.2,<0.8",
+]
+# napari[all] pulls in numba, which does not support the numpy the torch stack ships.
+# vispy 0.16 breaks napari layer teardown (KeyError in VispyCanvas._overlay_callbacks).
+napari = [
+  "napari>=0.5",
+  "vispy<0.16",
+  "pyqt6",
+  "magicgui",
+  "qtpy",
+  "superqt",
+  "pytest-qt",
+]
+test = ["pytest", "pytest-cov", "psutil"] # psutil: the regression guard's memory sampler
+dev = ["ruff", "ty", "pyinstrument", "viztracer"]
+docs = [
+  "sphinx>=8",
+  "sphinx-autobuild",
+  "sphinx-rtd-theme",
+  "sphinx-autodoc-typehints",
+  "myst-parser",              # the landing page is the README
+]
+
+[project.urls]
+Repository = "https://github.com/bmcv/baclct"
+
+[project.scripts]
+baclct-train = "baclct.train:main"
+baclct-track = "baclct.track:main"
+
+[project.entry-points."napari.manifest"]
+baclct = "baclct.napari:napari.yaml"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling", "hatch-vcs"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.metadata]
+allow-direct-references = true # needed for pixi + git
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/baclct/_version.py"
+
+[tool.pytest.ini_options]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "checkpoints: scores the shipped checkpoints end to end to identify performance regression",
+  "large: scores shipped checkpoint on full-size sequence (requires GPU and is very slow)",
+]
+testpaths = ["tests"]
+filterwarnings = [
+  # lightning user warnings for short training runs on cpu
+  "ignore:You called.*:UserWarning",
+  "ignore:You passed.*:UserWarning",
+  "ignore:You are trying.*:UserWarning",
+  "ignore:Trying to infer.*:UserWarning",
+  "ignore:GPU available.*:UserWarning",
+  "ignore:.*removed from hparams.*:UserWarning",
+  "ignore:.*workers.*:UserWarning",
+  "ignore:.*already saved during checkpointing.*:UserWarning",
+  "ignore:.*number of training batches.*:UserWarning",
+  "ignore:.*NaN values found in confusion matrix.*:UserWarning",
+  "ignore:Precision.*is not supported.*:UserWarning",
+  "ignore:Checkpoint directory.*exists.*",
+  # deprecation warnings
+  "ignore:`torch_geometric.distributed`.*:DeprecationWarning",
+  "ignore:`torch.jit.script` is not supported in Python 3.14.*:DeprecationWarning",
+  "ignore:.*isinstance\\(treespec, LeafSpec\\).*is deprecated.*",
+]
+
+[tool.ruff]
+line-length = 90
+exclude = ["scripts"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "NPY", "D"]
+ignore = ["D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+exclude = ["!**/_version.py", "scripts"]
+
+[tool.pixi.system-requirements]
+cuda = "12.0"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[tool.pixi.dependencies]
+python = ">=3.11"
+cudnn = ">=9.10.2.21,<10"
+pytorch-gpu = ">=2"
+# from conda-forge, not pypi: the pypi wheel links against pypi's libtorch, which the
+# conda pytorch here does not provide ("operator torchvision::nms does not exist")
+torchvision = "*"
+
+[tool.pixi.pypi-dependencies]
+baclct = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+train = "baclct-train"
+track = "baclct-track"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest -m \"not slow and not checkpoints\""
+test_slow = "pytest -m \"slow\""
+test_checkpoints = "pytest -m \"checkpoints and not large\""
+test_checkpoints_large = "pytest -m \"checkpoints and large\""
+test_all = "pytest -m \"not large\""
+
+[tool.pixi.feature.docs.tasks]
+docs = "sphinx-build -b html docs docs/_build/html"
+docs-clean = "rm -rf docs/_build docs/_autosummary"
+docs-serve = "sphinx-autobuild docs docs/_build/html --port 8000 --watch src"
+
+[tool.pixi.feature.napari.dependencies]
+# match the combination the other environments are locked to. solved freshly, this
+# environment picks the newest python and pytorch, for which the pypi torchvision wheel
+# is not ABI-compatible ("operator torchvision::nms does not exist").
+python = "3.13.*"
+pytorch-gpu = "2.9.*"
+
+[tool.pixi.feature.napari.pypi-dependencies]
+baclct = { path = ".", editable = true, extras = ["napari"] }
+
+[tool.pixi.feature.napari.tasks]
+napari = "napari"
+test_napari = "pytest src/baclct/napari"
+
+[tool.pixi.environments]
+default = ["train", "dev"]
+test = ["test", "train"]
+docs = ["docs", "train"]
+napari = ["napari", "test", "train"]

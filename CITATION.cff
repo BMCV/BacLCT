@@ -1,0 +1,44 @@
+cff-version: 1.2.0
+title: "BacLCT: Bacteria Life Cycle Tracking"
+message: "If you use this software, please cite the paper below."
+type: software
+version: 0.4.0
+date-released: "2026-08-26"
+authors:
+  - given-names: Moritz
+    family-names: Kunzmann
+    email: moritz.kunzmann@bioquant.uni-heidelberg.de
+    affiliation: BioQuant, Heidelberg University
+license: MIT
+repository-code: "https://github.com/bmcv/baclct"
+abstract: >-
+  BacLCT tracks bacteria in time-lapse microscopy and, optionally, classifies their life
+  cycle states. Segmented cells become nodes of a temporal graph, a message-passing graph
+  neural network classifies each candidate edge as correspondence, division, or no
+  correspondence and each node as a life cycle state, and a LAP-based tracker resolves
+  them into lineages.
+keywords:
+  - cell tracking
+  - time-lapse microscopy
+  - graph neural network
+  - bacteria
+preferred-citation:
+  type: article
+  title: >-
+    Bacteria tracking and life cycle state classification using graph neural networks and
+    pretrained vision transformers
+  authors:
+    - given-names: Moritz
+      family-names: Kunzmann
+    - given-names: M. Carolina
+      family-names: Elizondo-Cantú
+    - given-names: Ilka B.
+      family-names: Bischofs
+    - given-names: Karl
+      family-names: Rohr
+  journal: Medical Image Analysis
+  year: 2026
+  issn: "1361-8415"
+  start: 104275
+  doi: "10.1016/j.media.2026.104275"
+  url: "https://www.sciencedirect.com/science/article/pii/S1361841526003440"

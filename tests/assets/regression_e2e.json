@@ -1,0 +1,313 @@
+{
+  "machine": {
+    "cpu_count": 16,
+    "gpu": "NVIDIA GeForce RTX 3090"
+  },
+  "cache_mode": "warm",
+  "units": [
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "01",
+      "metrics": {
+        "TRA": 0.9995914513463948,
+        "LNK": 0.99685006299874,
+        "CHOTA": 0.9873828625754202,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 11.2,
+      "peak_tree_rss_gib": 2.06,
+      "peak_vram_gib": 0.25
+    },
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "05",
+      "metrics": {
+        "TRA": 0.999932181933267,
+        "LNK": 0.9994769874476988,
+        "CHOTA": 0.9995203644953708,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 10.2,
+      "peak_tree_rss_gib": 1.92,
+      "peak_vram_gib": 0.09
+    },
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "21",
+      "metrics": {
+        "TRA": 0.9985590778097982,
+        "LNK": 0.9890272835112692,
+        "CHOTA": 0.970264143111569,
+        "BC(0)": 0.9523809523809523,
+        "BC(3)": 0.9523809523809523
+      },
+      "wall_s": 5.2,
+      "peak_tree_rss_gib": 2.0,
+      "peak_vram_gib": 1.1
+    },
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "22",
+      "metrics": {
+        "TRA": 0.9999193635093001,
+        "LNK": 0.9993702770780857,
+        "CHOTA": 0.9973760495369948,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 4.7,
+      "peak_tree_rss_gib": 1.94,
+      "peak_vram_gib": 0.62
+    },
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "28",
+      "metrics": {
+        "TRA": 0.9999528561326314,
+        "LNK": 0.9996357012750455,
+        "CHOTA": 0.999421912208287,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 10.3,
+      "peak_tree_rss_gib": 1.97,
+      "peak_vram_gib": 0.19
+    },
+    {
+      "model": "baclct_spore_classification_bf",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "37",
+      "metrics": {
+        "TRA": 0.9994121105232217,
+        "LNK": 0.995475113122172,
+        "CHOTA": 0.9925639557312005,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 10.7,
+      "peak_tree_rss_gib": 1.87,
+      "peak_vram_gib": 0.05
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "01",
+      "metrics": {
+        "TRA": 0.9996277667822708,
+        "LNK": 0.997270054598908,
+        "CHOTA": 0.9861027831897246,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 7.9,
+      "peak_tree_rss_gib": 1.92,
+      "peak_vram_gib": 0.11
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "05",
+      "metrics": {
+        "TRA": 1.0,
+        "LNK": 1.0,
+        "CHOTA": 1.0,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 6.9,
+      "peak_tree_rss_gib": 1.91,
+      "peak_vram_gib": 0.06
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "21",
+      "metrics": {
+        "TRA": 0.9971371151220992,
+        "LNK": 0.9784994068801898,
+        "CHOTA": 0.962071130574227,
+        "BC(0)": 0.9047619047619048,
+        "BC(3)": 0.9047619047619048
+      },
+      "wall_s": 3.3,
+      "peak_tree_rss_gib": 1.91,
+      "peak_vram_gib": 0.37
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "22",
+      "metrics": {
+        "TRA": 0.9994355445651005,
+        "LNK": 0.9955919395465995,
+        "CHOTA": 0.985396374966345,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 3.3,
+      "peak_tree_rss_gib": 1.9,
+      "peak_vram_gib": 0.23
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "28",
+      "metrics": {
+        "TRA": 0.9998585683978942,
+        "LNK": 0.9989071038251366,
+        "CHOTA": 0.9967289280064439,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 7.0,
+      "peak_tree_rss_gib": 1.92,
+      "peak_vram_gib": 0.08
+    },
+    {
+      "model": "baclct_track",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "37",
+      "metrics": {
+        "TRA": 0.9994121105232217,
+        "LNK": 0.995475113122172,
+        "CHOTA": 0.9925639557312005,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 7.0,
+      "peak_tree_rss_gib": 1.87,
+      "peak_vram_gib": 0.05
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "01",
+      "metrics": {
+        "TRA": 0.9993281644362937,
+        "LNK": 0.994820103597928,
+        "CHOTA": 0.9795166733198689,
+        "BC(0)": 0.8333333333333333,
+        "BC(3)": 0.8333333333333333
+      },
+      "wall_s": 7.8,
+      "peak_tree_rss_gib": 1.93,
+      "peak_vram_gib": 0.09
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "05",
+      "metrics": {
+        "TRA": 0.999864363866534,
+        "LNK": 0.9989539748953975,
+        "CHOTA": 0.9985082974648075,
+        "BC(0)": 1.0,
+        "BC(3)": 1.0
+      },
+      "wall_s": 6.9,
+      "peak_tree_rss_gib": 1.89,
+      "peak_vram_gib": 0.05
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "21",
+      "metrics": {
+        "TRA": 0.9939329591991506,
+        "LNK": 0.9531435349940688,
+        "CHOTA": 0.8695549763453876,
+        "BC(0)": 0.28571428571428575,
+        "BC(3)": 0.28571428571428575
+      },
+      "wall_s": 3.2,
+      "peak_tree_rss_gib": 1.89,
+      "peak_vram_gib": 0.16
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "22",
+      "metrics": {
+        "TRA": 0.9953499623696377,
+        "LNK": 0.9636859781696053,
+        "CHOTA": 0.8869112791770735,
+        "BC(0)": 0.3636363636363636,
+        "BC(3)": 0.3636363636363636
+      },
+      "wall_s": 3.2,
+      "peak_tree_rss_gib": 1.87,
+      "peak_vram_gib": 0.11
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "28",
+      "metrics": {
+        "TRA": 0.999685707550876,
+        "LNK": 0.9975713418336369,
+        "CHOTA": 0.9776953073687111,
+        "BC(0)": 0.6666666666666666,
+        "BC(3)": 0.6666666666666666
+      },
+      "wall_s": 7.0,
+      "peak_tree_rss_gib": 1.9,
+      "peak_vram_gib": 0.07
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "spores",
+      "radius": null,
+      "seq": "37",
+      "metrics": {
+        "TRA": 0.9969625710366451,
+        "LNK": 0.9766214177978884,
+        "CHOTA": 0.8307485471250937,
+        "BC(0)": 0.4444444444444445,
+        "BC(3)": 0.4444444444444445
+      },
+      "wall_s": 7.1,
+      "peak_tree_rss_gib": 1.89,
+      "peak_vram_gib": 0.04
+    },
+    {
+      "model": "baclct_toiam_pc",
+      "dataset": "toiam",
+      "radius": 55,
+      "seq": "03",
+      "metrics": {
+        "TRA": 0.9996091245815228,
+        "LNK": 0.9971256912678365,
+        "CHOTA": 0.9853519461294569,
+        "BC(0)": 0.9849476439790574,
+        "BC(3)": 0.9849476439790574
+      },
+      "wall_s": 212.4,
+      "peak_tree_rss_gib": 18.93,
+      "peak_vram_gib": 13.23
+    }
+  ]
+}

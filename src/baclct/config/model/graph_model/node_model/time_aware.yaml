@@ -1,0 +1,37 @@
+_target_: baclct.models.model.TimeAwareNodeModel
+node_mlp:
+  _target_: torch_geometric.nn.MLP
+  channel_list:
+    [
+      -1,
+      "${mul:${model.graph_model.hidden_node_dim}, 2}",
+      "${model.graph_model.hidden_node_dim}",
+    ]
+  plain_last: false
+  dropout: ${model.graph_model.dropout}
+  act: ${model.graph_model.act}
+  norm: ${model.graph_model.norm}
+flow_in_mlp:
+  _target_: torch_geometric.nn.MLP
+  channel_list:
+    [
+      -1,
+      "${mul:${model.graph_model.hidden_edge_dim}, 2}",
+      "${model.graph_model.hidden_edge_dim}",
+    ]
+  plain_last: false
+  dropout: ${model.graph_model.dropout}
+  act: ${model.graph_model.act}
+  norm: ${model.graph_model.norm}
+flow_out_mlp:
+  _target_: torch_geometric.nn.MLP
+  channel_list:
+    [
+      -1,
+      "${mul:${model.graph_model.hidden_edge_dim}, 2}",
+      "${model.graph_model.hidden_edge_dim}",
+    ]
+  plain_last: false
+  dropout: ${model.graph_model.dropout}
+  act: ${model.graph_model.act}
+  norm: ${model.graph_model.norm}

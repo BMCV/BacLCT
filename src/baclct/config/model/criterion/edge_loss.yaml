@@ -1,0 +1,5 @@
+defaults:
+  - loss_fn@edge_loss_fn: class_balanced_focal
+
+edge_loss_fn:
+  num_classes: ${num_edge_classes}

@@ -1,0 +1,5 @@
+defaults:
+  - _base
+
+  - override graph_model/node_encoder: deep
+  - override graph_model/node_model: time_aware

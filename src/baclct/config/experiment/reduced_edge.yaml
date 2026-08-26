@@ -1,0 +1,12 @@
+# @package _global_
+
+defaults:
+  - override /dataset: spores
+  - override /task: tracking_with_states
+
+features:
+  edges:
+    feature_names: ["dist_temp", "dist_spat"]
+    extra_features: null
+
+experiment_name: reduced_edge

@@ -1,0 +1,16 @@
+_target_: lightning.Trainer
+
+default_root_dir: ${paths.output_dir}
+
+min_epochs: 1 # prevents early stopping during sanity checks
+max_epochs: 360 # 3 cycles of cosine annealing with warm restarts + 10 epochs warmup
+check_val_every_n_epoch: 10
+
+gradient_clip_val: 1.0
+limit_train_batches: 250
+
+devices: auto
+
+accelerator: auto
+precision: ${auto_precision:} # bf16-mixed if available, 16-mixed otherwise
+deterministic: true

@@ -1,0 +1,13 @@
+defaults:
+  - node_loss
+  - edge_loss
+
+_target_: baclct.models.loss.MultiTaskLoss
+
+# node_loss and edge_loss are scoped, so they are automatically
+# resolved as node_loss_fn and edge_loss_fn
+
+edge_loss_weight: 1.0
+node_loss_weight: 0.5
+
+aggregate_losses: sum

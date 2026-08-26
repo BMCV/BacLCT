@@ -1,0 +1,9 @@
+# @package _global_
+
+defaults:
+  - override /dataset: spores
+  - override /task: tracking_with_states
+  - override /features: handcrafted_only
+  - override /model: handcrafted
+
+experiment_name: no_dino

@@ -1,0 +1,12 @@
+defaults:
+  - _base
+  - _self_
+
+job_logging:
+  root:
+    level: DEBUG
+  handlers:
+    console:
+      level: DEBUG
+    file:
+      level: DEBUG

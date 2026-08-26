@@ -1,0 +1,15 @@
+defaults:
+  - _base
+
+run:
+  dir: ${paths.base_dir}/runs/${config_name}/${now:%Y-%m-%d}_${now:%H-%M-%S}
+sweep:
+  subdir: .
+
+job_logging:
+  handlers:
+    console:
+      level: INFO
+    file:
+      filename: ${paths.output_dir}/tests.log
+      level: INFO

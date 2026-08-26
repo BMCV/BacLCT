@@ -1,0 +1,14 @@
+_target_: baclct.features.graph.EdgeFinder
+_convert_: all
+
+feature_names: ["dist_temp", "dist_spat", "overlap", "iou", "cosine_similarity", "relative_size", "intensity_mean_diff"]
+extra_features: ["relative_size", "intensity_mean_diff"]
+edge_normalization: cell_size
+
+treat_divs_as: division
+prune_edges_by: [ellipse, 7]
+bidirectional: true
+
+center_name: center
+
+n_jobs: -1
