@@ -67,7 +67,7 @@ docs = [
   "sphinx-autobuild",
   "sphinx-rtd-theme",
   "sphinx-autodoc-typehints",
-  "myst-parser",              # the landing page is the README
+  "sphinx-design",            # tabbed installation instructions
 ]
 
 [project.urls]

@@ -17,7 +17,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints",
-    "myst_parser",
+    "sphinx_design",
 ]
 
 autosummary_generate = True

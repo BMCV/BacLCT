@@ -263,13 +263,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--thr-corr",
         type=float,
         default=None,
-        help="Correspondence threshold of the LAP tracker.",
+        help="Correspondence threshold of the tracker.",
     )
     parser.add_argument(
         "--thr-div",
         type=float,
         default=None,
-        help="Division threshold of the LAP tracker.",
+        help="Division threshold of the tracker.",
     )
     parser.add_argument(
         "--segmentation-correction",
@@ -368,7 +368,7 @@ def main():
 
     Loads the model named by `--model` and applies it to one or more image sequences. For
     each sequence, features are extracted from scratch (and cached only when `--cache-dir`
-    is given), the GNN predicts edge and node classes, and a LAP tracker produces the
+    is given), the GNN predicts edge and node classes, and the tracker produces the
     final trajectories and (if the model was trained for it) life cycle state
     classifications. Tracked masks and lineage are exported in CTC or flat format,
     alongside the full single-cell trajectories and state classifications.

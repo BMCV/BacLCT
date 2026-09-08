@@ -119,9 +119,9 @@ def expand_binary_predictions(edge_preds: pl.DataFrame) -> pl.DataFrame:
     """Expand single-class binary predictions to 3-class predictions.
 
     Applied to make predictions from model without learned division detection compatible
-    with the LAP tracker. In the LAP tracker, divisions are resolved greedy and are
-    converted into correspondences in the case of a single-daughter division. This also
-    keeps the multi-frame tracking logic in-place.
+    with `LAPTracker`. There, divisions are resolved greedily and are converted into
+    correspondences in the case of a single-daughter division. This also keeps the
+    multi-frame tracking logic in-place.
     """
     p_logit = edge_preds["p0"].to_numpy()
     normalized = (max(p_logit) <= 1) and (min(p_logit) >= 0)

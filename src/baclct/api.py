@@ -371,9 +371,10 @@ class BacLCT:
                 distribution. Unspecified axes default to `1.0`.
 
         Returns:
-            Tracked masks (matching `masks`'s shape) and the cleaned tracks frame
-            (`label`, `t`, `parent`, the single-cell features, and `state` when states
-            are classified). Raw edge and node predictions are reachable afterward via
+            Tracked masks (matching `masks`'s shape) and the cleaned tracks frame, one
+            row per cell and frame (`label`, `t`, the center coordinate, `parent`, the
+            remaining single-cell features, and `state` when states are classified).
+            Raw edge and node predictions are reachable afterward via
             `self.edge_preds`/`self.node_preds`, and the dataset and model via
             `self.dataset`/`self.model`. On-disk export still follows `export_format`.
         """

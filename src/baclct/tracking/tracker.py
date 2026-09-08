@@ -1,4 +1,4 @@
-"""Reconstruct trajectories from multi-frame edge predictions using LAP."""
+"""Reconstruct trajectories from multi-frame edge predictions."""
 
 from __future__ import annotations
 
@@ -396,7 +396,7 @@ class BaseTracker(ABC):
 
 
 class LAPTracker(BaseTracker):
-    """LAP-based cell tracker.
+    """Track reconstruction by bipartite matching and greedy division assignment.
 
     Walks frame by frame. For each consecutive pair, correspondence candidates are
     resolved by maximum-weight bipartite matching using `p1` as the edge weight. Sources
@@ -550,9 +550,9 @@ class LAPTracker(BaseTracker):
     def _solve_lap_frame(
         self, candidates: pl.DataFrame, frame: int, frame_next: int
     ) -> pl.DataFrame:
-        """Solve assignment between candidates on two frames.
+        """Solve the correspondence assignment between candidates on two frames.
 
-        Solves correspondence assignment between `t`, `t-n` (unmatched), and `t+1`.
+        Maximum-weight bipartite matching between `t`, `t-n` (unmatched), and `t+1`.
 
         Returns:
             3-col dataframe with `src`, `dst`, and `type==traj`.
@@ -664,8 +664,9 @@ class LAPTracker(BaseTracker):
     def track(self):
         """Run tracking.
 
-        Predictions are normalized. LAP is solved for correspondences, unmatched nodes
-        are considered for division, and tracks are reconstructed.
+        Predictions are normalized, correspondences are matched per frame pair,
+        unmatched nodes are then greedily checked for divisions, and tracks are
+        reconstructed.
 
         Returns:
             Trajectories determined by `index`, position, label/parent on image `label`
