@@ -143,6 +143,9 @@ def test_load_images_and_masks_layouts(
     )
 
     assert isinstance(lazy_imgs, da.Array)
+    assert isinstance(lazy_masks, da.Array)
+    assert lazy_imgs.chunks[0] == (1,) * len(toy_images)
+    assert lazy_masks.chunks[0] == (1,) * len(toy_masks)
     np.testing.assert_array_equal(np.asarray(lazy_imgs), toy_images)
     np.testing.assert_array_equal(np.asarray(lazy_masks), toy_masks)
     np.testing.assert_array_equal(np.asarray(eager_imgs), toy_images)

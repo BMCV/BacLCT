@@ -225,23 +225,35 @@ class GraphDataset(Dataset):
             filepath_hc = None
             filepath_pct = None
 
+        # prevent computing percentiles when not using them
+        uses_intensity = self._uses_intensity()
+
         if masks is not None:
             self.images = images  # may be None for mask-only tracking
             self.masks = masks
             self.sequence_id = sequence_id or "pred"
-            self.image_percentiles = cached_percentiles(images, filepath_pct)
+            self.image_percentiles = (
+                cached_percentiles(images, filepath_pct) if uses_intensity else None
+            )
         else:
             assert isinstance(data_dir, Path) and isinstance(sequence_id, str)
-            self.images, self.masks, self.image_percentiles = load_images_and_masks(
-                data_dir,
-                sequence_id,
-                data_format=data_format,
-                lazy=True,
-                return_percentiles=True,
-                segmentation_name=segmentation_name,
-                img_name=img_name,
-                percentile_file=filepath_pct,
-            )
+            load_kwargs: dict = {
+                "data_format": data_format,
+                "lazy": True,
+                "segmentation_name": segmentation_name,
+                "img_name": img_name,
+                "percentile_file": filepath_pct,
+                "strict": uses_intensity,
+            }
+            if uses_intensity:
+                self.images, self.masks, self.image_percentiles = load_images_and_masks(
+                    data_dir, sequence_id, return_percentiles=True, **load_kwargs
+                )
+            else:
+                self.images, self.masks = load_images_and_masks(
+                    data_dir, sequence_id, return_percentiles=False, **load_kwargs
+                )
+                self.image_percentiles = None
         if self.images is not None:
             assert isinstance(self.images, (da.Array, np.ndarray)) and isinstance(
                 self.masks, (da.Array, np.ndarray)
@@ -723,6 +735,15 @@ class GraphDataset(Dataset):
             )
 
         return node_data.with_row_index("new_index")
+
+    def _uses_intensity(self) -> bool:
+        """Whether dataset requires image intensities."""
+        if self.deep_feature_extractor is not None:
+            return True
+
+        extractor = self.handcrafted_feature_extractor
+        props = getattr(extractor, "props", None) or []
+        return any("intensity" in p for p in props)
 
     def _remap_edges(
         self, edge_data: pl.DataFrame, node_mapping: pl.DataFrame

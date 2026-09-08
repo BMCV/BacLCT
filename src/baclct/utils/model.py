@@ -158,6 +158,10 @@ def class_counts_from_datasets(
     else:
         datasets = [dataset_train]
 
+    # class_balanced_loss expects precomputed counts of shape (2,) (see models/loss.py)
+    edge_bins = max(num_edge_classes, 2) if num_edge_classes else num_edge_classes
+    node_bins = max(num_node_classes, 2) if num_node_classes else num_node_classes
+
     edge_counts = []
     node_counts = []
     for ds in cast("list[GraphDataset]", datasets):
@@ -166,8 +170,8 @@ def class_counts_from_datasets(
             # GraphDataset (see its missing_trajectories) and count towards class 0.
             node_counts.append(
                 np.bincount(
-                    np.clip(ds.node_feats["y"], 0, num_node_classes - 1),
-                    minlength=num_node_classes,
+                    np.clip(ds.node_feats["y"], 0, node_bins - 1),
+                    minlength=node_bins,
                 )
             )
 
@@ -175,9 +179,7 @@ def class_counts_from_datasets(
             edge_data = cast("pl.LazyFrame | pl.DataFrame", ds.edge_data)
             edge_y = collect(edge_data.select("y"))["y"]
             edge_counts.append(
-                np.bincount(
-                    np.clip(edge_y, 0, num_edge_classes - 1), minlength=num_edge_classes
-                )
+                np.bincount(np.clip(edge_y, 0, edge_bins - 1), minlength=edge_bins)
             )
 
     return (

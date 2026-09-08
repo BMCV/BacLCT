@@ -598,7 +598,7 @@ class LAPTracker(BaseTracker):
         out_degree = dict.fromkeys(np.unique(candidates_frame["src"]), 0)
         in_degree = dict.fromkeys(np.unique(candidates_frame["dst"]), 0)
         for u, v, _w in candidates_frame.iter_rows():
-            if (out_degree[u] >= 2) or (in_degree[v] >= 1):
+            if (out_degree[u] >= self.max_divisions) or (in_degree[v] >= 1):
                 continue
 
             out_degree[u] += 1

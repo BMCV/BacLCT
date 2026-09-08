@@ -1051,10 +1051,11 @@ def test_from_images_and_masks_temp_cache(toy_images, toy_masks, basic_extractor
     assert dataset._feature_tempdir is not None
     cache_root = Path(dataset._feature_tempdir.name)
     assert isinstance(dataset.edge_data, pl.LazyFrame)
-    # node features and the percentiles are cached alongside the edges
+    # node features are cached alongside the edges
     hc_dir = cache_root / "toy" / "seg"
     assert (hc_dir / "nodes.parquet").exists()
-    assert (hc_dir / "percentiles.json").exists()
+    # no intensity prop and no deep extractor, so the percentile pass is skipped
+    assert not (hc_dir / "percentiles.json").exists()
 
     # items still assemble from the lazily scanned store
     assert dataset[1] is not None
@@ -1062,6 +1063,47 @@ def test_from_images_and_masks_temp_cache(toy_images, toy_masks, basic_extractor
     del dataset
     gc.collect()
     assert not cache_root.exists()
+
+
+def test_mask_only_sequence_builds(tmp_path, toy_masks, basic_extractors):
+    """A shape-only model builds from masks alone, without images on disk."""
+    edge_finder, hc_extractor = basic_extractors
+    data_dir, feature_dir = prepare_dataset_structure(
+        tmp_path, {"masks_only": {"masks": toy_masks}}
+    )
+    for stray in (data_dir / "masks_only").glob("*.tif"):
+        stray.unlink()
+
+    dataset = GraphDataset(
+        data_dir=data_dir,
+        feature_dir=feature_dir,
+        sequence_id="masks_only",
+        data_format="ctc",
+        img_name=None,
+        segmentation_name="GT",
+        edge_finder=edge_finder,
+        handcrafted_feature_extractor=hc_extractor,
+        deep_feature_extractor=None,
+        graph_search_radius=50,
+        graph_num_steps=1,
+    )
+
+    assert dataset.images is None
+    assert dataset[1] is not None
+
+
+def test_unmatched_lineage_label_keeps_other_annotations(basic_extractors):
+    """One label without a node drops that row, not every node's annotation."""
+    _, hc_extractor = basic_extractors
+    features = pl.DataFrame({"label": [1, 2], "t": [0, 0], "area": [10.0, 12.0]})
+    lineage = pl.DataFrame(
+        {"label": [1, 2, 99], "t": [0, 0, 0], "parent": [0, 1, 0], "state": [1, 2, 1]}
+    )
+
+    out = hc_extractor._check_and_add_lineage_information(features, lineage)
+
+    assert out.height == 2
+    assert out["state"].to_list() == [1, 2]
 
 
 def test_persistent_cache_invalidates_on_different_masks(

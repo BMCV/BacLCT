@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from itertools import chain
 from pathlib import Path
 from typing import Literal, overload
 
 import dask.array as da
-import dask.array.image
 import numpy as np
 import yaml
 from tifffile import imread
@@ -263,19 +263,18 @@ def _read_tifs(source: Path, lazy: bool) -> da.Array | np.ndarray | None:
         return None
 
     if source.is_dir():
-        files = sorted(source.glob("*.tif"))
-        if not files:
+        target: Path | Sequence[Path] = sorted(source.glob("*.tif"))
+        if not target:
             return None
-        if lazy:
-            return dask.array.image.imread(str(source / "*.tif"), imread=imread)
-        return np.stack([imread(fp) for fp in files])
+    else:
+        target = source
 
-    if not lazy:
-        return imread(source)
+    if lazy:
+        arr = da.from_zarr(imread(target, aszarr=True))
+    else:
+        arr = imread(target)
 
-    # a lazy read stacks the file list, so a multi-page file gains a leading axis
-    stack = dask.array.image.imread(str(source), imread=imread)
-    return stack[0] if stack.ndim > 3 else stack
+    return arr[None] if arr.ndim < 3 else arr
 
 
 # without percentiles

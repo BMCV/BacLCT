@@ -33,6 +33,7 @@ dependencies = [
   "pyyaml",
   "tqdm",
   "tifffile",
+  "zarr",
   "pyarrow>=21.0.0",
 
   "pooch",        # download + cache of the pre-trained models
@@ -60,14 +61,14 @@ napari = [
   "superqt",
   "pytest-qt",
 ]
-test = ["pytest", "pytest-cov", "psutil"] # psutil: the regression guard's memory sampler
+test = ["pytest", "pytest-cov"]
 dev = ["ruff", "ty", "pyinstrument", "viztracer"]
 docs = [
   "sphinx>=8",
   "sphinx-autobuild",
   "sphinx-rtd-theme",
   "sphinx-autodoc-typehints",
-  "sphinx-design",            # tabbed installation instructions
+  "sphinx-design",
 ]
 
 [project.urls]
@@ -96,8 +97,6 @@ version-file = "src/baclct/_version.py"
 [tool.pytest.ini_options]
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-  "checkpoints: scores the shipped checkpoints end to end to identify performance regression",
-  "large: scores shipped checkpoint on full-size sequence (requires GPU and is very slow)",
 ]
 testpaths = ["tests"]
 filterwarnings = [
@@ -164,11 +163,9 @@ train = "baclct-train"
 track = "baclct-track"
 
 [tool.pixi.feature.test.tasks]
-test = "pytest -m \"not slow and not checkpoints\""
+test = "pytest -m \"not slow\""
 test_slow = "pytest -m \"slow\""
-test_checkpoints = "pytest -m \"checkpoints and not large\""
-test_checkpoints_large = "pytest -m \"checkpoints and large\""
-test_all = "pytest -m \"not large\""
+test_all = "pytest"
 
 [tool.pixi.feature.docs.tasks]
 docs = "sphinx-build -b html docs docs/_build/html"
