@@ -65,6 +65,19 @@ def resolve_accelerator(device: str | None) -> tuple[str, int | list[int]]:
     return accelerator, 1
 
 
+def close_worker_pool() -> None:
+    """Shut down the shared joblib/loky pool, if running.
+
+    Closing pool frees ~4-6GB of memory. Restarting is expensive, so this is only done
+    after data prep during training or ones the tracking is done (to keep it alive for
+    multiple sequences).
+    """
+    from joblib.externals.loky import reusable_executor
+
+    if reusable_executor._executor is not None:
+        reusable_executor._executor.shutdown(wait=True)
+
+
 def get_multiprocessing_context(num_workers: int) -> str | None:
     """Start method for dataloader workers, or `None` when running single-process.
 

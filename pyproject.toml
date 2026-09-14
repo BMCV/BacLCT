@@ -21,7 +21,6 @@ dependencies = [
   "omegaconf",
   "hydra-core>=1.3",
   "hydra-colorlog>=1.2.0",
-
   "polars>=1.35.0",
   "rustworkx>=0.17",
   "dask",
@@ -32,12 +31,14 @@ dependencies = [
   "networkx",
   "pyyaml",
   "tqdm",
+  "typer",
   "tifffile",
   "zarr",
   "pyarrow>=21.0.0",
-
   "pooch",        # download + cache of the pre-trained models
   "platformdirs", # user cache directory the models are downloaded into
+  "bioio-tifffile>=1.3.0",
+  "bioio>=3.5.0",
 ]
 
 [project.optional-dependencies]
@@ -59,10 +60,25 @@ napari = [
   "magicgui",
   "qtpy",
   "superqt",
-  "pytest-qt",
 ]
-test = ["pytest", "pytest-cov"]
-dev = ["ruff", "ty", "pyinstrument", "viztracer"]
+
+[project.urls]
+Documentation = "https://baclct.readthedocs.io"
+Repository = "https://github.com/bmcv/baclct"
+"Bug Tracker" = "https://github.com/bmcv/baclct/issues"
+
+[project.scripts]
+baclct = "baclct.cli:app"
+baclct-track = "baclct.cli:track_entry"
+baclct-napari = "baclct.cli:napari_entry"
+baclct-train = "baclct.train:main"
+
+[project.entry-points."napari.manifest"]
+baclct = "baclct.napari:napari.yaml"
+
+[dependency-groups]
+test = ["pytest", "pytest-cov", "pytest-qt"]
+dev = ["ruff", "ty"]
 docs = [
   "sphinx>=8",
   "sphinx-autobuild",
@@ -71,28 +87,31 @@ docs = [
   "sphinx-design",
 ]
 
-[project.urls]
-Repository = "https://github.com/bmcv/baclct"
-
-[project.scripts]
-baclct-train = "baclct.train:main"
-baclct-track = "baclct.track:main"
-
-[project.entry-points."napari.manifest"]
-baclct = "baclct.napari:napari.yaml"
-
 [build-system]
 build-backend = "hatchling.build"
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"] # 1.27 parses the PEP 639 license fields
 
 [tool.hatch.version]
 source = "vcs"
 
-[tool.hatch.metadata]
-allow-direct-references = true # needed for pixi + git
-
 [tool.hatch.build.hooks.vcs]
 version-file = "src/baclct/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baclct"]
+exclude = ["**/_tests"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/docs",
+  "/examples",
+  "/README.md",
+  "/LICENSE",
+  "/CITATION.cff",
+  "/pixi.lock",
+]
 
 [tool.pytest.ini_options]
 markers = [
@@ -158,9 +177,6 @@ torchvision = "*"
 [tool.pixi.pypi-dependencies]
 baclct = { path = ".", editable = true }
 
-[tool.pixi.tasks]
-train = "baclct-train"
-track = "baclct-track"
 
 [tool.pixi.feature.test.tasks]
 test = "pytest -m \"not slow\""
@@ -184,10 +200,11 @@ baclct = { path = ".", editable = true, extras = ["napari"] }
 
 [tool.pixi.feature.napari.tasks]
 napari = "napari"
+baclct_napari = "baclct-napari"
 test_napari = "pytest src/baclct/napari"
 
 [tool.pixi.environments]
 default = ["train", "dev"]
 test = ["test", "train"]
-docs = ["docs", "train"]
+docs = ["docs", "train", "napari"]
 napari = ["napari", "test", "train"]

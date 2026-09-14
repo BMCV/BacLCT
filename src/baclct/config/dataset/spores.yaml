@@ -26,6 +26,8 @@ data:
   sampling_size_measure: cells # some long sequences have only few cells
 
 features:
+  handcrafted:
+    n_jobs: 2
   edges:
     prune_edges_by: [dilated_overlap, thickness]
 

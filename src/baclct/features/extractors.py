@@ -32,10 +32,6 @@ logger = get_pylogger(__name__)
 
 RoiStrategy: TypeAlias = Literal["bbox", "axis_major_length", "len_init", "median_size"]
 
-# an in-memory stack above this size is copied into every dataloader worker, so cropping
-# it inline beats paying that per worker
-_MAX_WORKER_COPY_BYTES = 512 * 1024**2
-
 # regionprops reductions that a bare prop name (e.g. "intensity") may expand to
 _EXPANDABLE_STAT_SUFFIXES = ("min", "max", "mean", "median", "std")
 
@@ -173,8 +169,8 @@ class HandcraftedExtractor(BaseExtractor):
                 a single cache is compatible with multiple normalization methods.
                 Normalized features are suffixed with `_norm`.
             verbose: Print additional info and progress during feature extraction.
-            n_jobs: Number of parallel threads (joblib) used during regionprops
-                extraction across frames.
+            n_jobs: Number of worker processes (joblib) used during regionprops extraction
+                across frames.
             min_node_area: Drop cells smaller than this area before indexing.
             **kwargs: Additional arguments passed to `regionprops`.
         """
@@ -357,9 +353,9 @@ class HandcraftedExtractor(BaseExtractor):
             bad = [c for i, c in enumerate(cols_to_select) if not finite[:, i].all()]
             raise ValueError(
                 f"Non-finite handcrafted features in column(s) {bad}. These propagate "
-                "into the loss as nan and also cause tracking errors (distributed through "
-                "message passing and batch norm). This is usually caused by segmentation "
-                "errors or scaling artifacts, e.g., single-pixel regions."
+                "into the loss as nan and also cause tracking errors (distributed "
+                "through message passing and batch norm). This is usually caused by "
+                "segmentation errors or scaling artifacts, e.g., single-pixel regions."
             )
 
         return torch.as_tensor(x, dtype=torch.float32)
@@ -404,7 +400,7 @@ class HandcraftedExtractor(BaseExtractor):
                 )
             )
 
-        parallel = Parallel(n_jobs=self.n_jobs, return_as="generator")
+        parallel = Parallel(n_jobs=self.n_jobs, backend="loky", return_as="generator")
         if self.verbose:
             node_feats_iter = tqdm(
                 parallel(tasks), total=len(tasks), desc="Processing frames (handcrafted)"
@@ -987,25 +983,10 @@ class CellLevelExtractor(BaseExtractor):
             expand_channels=not for_encoder,
         )
 
-    def _effective_num_workers(self, image: Any) -> int:
-        """Workers that can prepare patches for this input, or 0 where they would hurt."""
-        if self.num_workers <= 0:
+    def _worker_count(self) -> int:
+        """Workers for cropping, forced to 0 when already running inside one."""
+        if self.num_workers <= 0 or get_worker_info() is not None:
             return 0
-
-        if get_worker_info() is not None:
-            # this call is already inside a worker
-            return 0
-
-        if isinstance(image, da.Array):
-            if image.chunksize[0] != 1:
-                # a coarser chunk means every item decodes more than the frame it needs
-                logger.debug("Frames are not chunked individually, cropping inline.")
-                return 0
-        elif getattr(image, "nbytes", 0) > _MAX_WORKER_COPY_BYTES:
-            # forkserver pickles an in-memory stack into every worker
-            logger.debug("Image stack is too large to copy per worker, cropping inline.")
-            return 0
-
         return self.num_workers
 
     def _weighting_key(self) -> str | None:
@@ -1075,7 +1056,7 @@ class CellLevelExtractor(BaseExtractor):
         if self.encoder is None:
             raise RuntimeError("Predictor not loaded. Call _load_predictor() first.")
 
-        num_workers = self._effective_num_workers(image)
+        num_workers = self._worker_count()
         dataset = self._build_patch_dataset(
             image, coords, masks, image_percentiles, for_encoder=True
         )

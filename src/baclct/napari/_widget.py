@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import re
 import tempfile
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import dask.array as da
 import numpy as np
 import torch
+from magicgui.application import use_app
 from magicgui.widgets import (
     CheckBox,
     ComboBox,
@@ -24,6 +27,7 @@ from magicgui.widgets import (
 )
 from napari.layers import Image, Labels
 from napari.utils.notifications import show_info, show_warning
+from qtpy.QtWidgets import QSizePolicy
 from superqt import QCollapsible
 
 from baclct.napari._layers import add_result_layers
@@ -37,12 +41,11 @@ if TYPE_CHECKING:
 RADIUS_LAYER_NAME = "BacLCT search radius"
 DEFAULT_RADIUS = "2.5x"
 DEFAULT_SUFFIX = {"flat": "_tracks", "ctc": "_RES"}
-# returned by _search_radius for free text that is neither a number nor an 'Nx' spec
+# sentinel for radius text that is neither a number nor an 'Nx' spec
 INVALID_RADIUS = object()
 
-# edge pruning offered as (label, value). 'off' is what `BacLCT.track` reads as no
-# pruning at all, the others must stay valid non-'gt' EdgePruneArg members, since 'gt'
-# is not available during inference
+# (label, value) pairs. values stay EdgePruneArg members plus 'off'. 'gt' is left out,
+# it is not available during inference
 PRUNE_CHOICES = (
     ("Default", "default"),
     ("Overlap", "overlap"),
@@ -54,56 +57,108 @@ PRUNE_CHOICES = (
 PRUNE_HELP = {
     "default": "Pruning determined by the pretrained model.",
     "overlap": "Cells are linked only if their masks overlap.",
-    "dilated_overlap": (
-        "Cells are linked if their expanded masks overlap. Expansion is done based on a "
-        "cell's thickness."
-    ),
+    "dilated_overlap": "Cells are linked if their thickness-expanded masks overlap.",
     "ellipse": "Cells are linked within an elliptical search region.",
     "radius": "Cells are linked within a circular search region.",
     "off": "No pruning: every cell within the search radius stays a candidate.",
 }
-# 'overlap' filters on a fraction of the source cell's area, the others scale a cell axis,
-# so the same spinbox has to mean two different things
+# 'overlap' is an area fraction, the others scale a cell axis
 PRUNE_PARAM_SPECS = {
     "overlap": {"label": "Minimum overlap", "min": 0.0, "max": 1.0, "step": 0.05},
     "default": {"label": "Factor", "min": 0.1, "max": 100.0, "step": 0.5},
 }
 PRUNE_PARAM_DEFAULTS = {"overlap": 0.1}
 
-# dilated_overlap's dilation multiplier is fixed (DILATED_OVERLAP_RADIUS_MULTIPLIER in
-# features/graph.py); DEFAULT_PRUNE_PARAM below is only the 'ellipse'/'radius' fallback.
+# fallback for 'ellipse' and 'radius'. dilated_overlap's multiplier is fixed as
+# DILATED_OVERLAP_RADIUS_MULTIPLIER in features/graph.py
 DEFAULT_PRUNE_PARAM = 3.0
 DILATED_OVERLAP_COLUMN = "thickness"
-# methods with no parameter for the spinbox to set
 PARAMETERLESS_PRUNE_METHODS = ("default", "dilated_overlap", "off")
-# swatch colors match the preview shapes drawn by radius_preview_shapes
+# swatch colors match radius_preview_shapes
 RADIUS_LEGEND = (
     '<span style="color:yellow">●</span> search region&nbsp;&nbsp;&nbsp;'
     '<span style="color:cyan">●</span> candidates (pruned)'
 )
 
-# pretrained models, in the order they are offered. the first is the safe default: it
-# tracks both bright field and phase contrast.
+# the first tracks both bright field and phase contrast
 PRETRAINED_MODELS = ("baclct_track", "baclct_spore_classification_bf", "baclct_toiam_pc")
 CACHE_MODES = ("In memory", "Session", "Directory")
-CACHE_HELP = (
-    "Cache stores the sequence graph and features locally (usually <1GB), which saves "
-    "RAM and lets you reuse the same features and graphs across models and parameters. "
-    "'Session' keeps cache until napari closes, 'Directory' re-uses an existing cache "
-    "(e.g., from a previous training run), and 'In memory' keeps everything in RAM."
-)
+
+# section header lines and tooltips are worded from docs/guide/inference.rst and
+# docs/guide/cli.rst
 TRACKING_HELP = (
     "Raise or lower the thresholds to link more cells or suppress division detection. "
     "Increase the search radius to link over larger distances, narrow it to save memory."
 )
 RUNTIME_HELP = (
-    "Parallel jobs speed up feature extraction on long movies. Small (or even adverse) "
-    "effect for short movies (<1K objects). Encoder workers crop cell patches while the "
-    "encoder runs, where 2 is fastest and more is slower again. Both increase memory "
-    "requirements and startup time."
+    "More workers and a larger batch speed up inference, at the cost of memory. For "
+    "small sequences not using workers is often faster."
 )
+# Qt renders a plain-text tooltip on a single line
+TOOLTIP_WIDTH = 90
+_HELP_TEXTS = {
+    "channel": (
+        "Channel to track, for an image with a channel axis the segmentation does not "
+        "have."
+    ),
+    "model_source": "A pretrained model, or a directory holding one.",
+    "model_path": "Directory of a trained model, as written by a training run.",
+    "thr_corr": (
+        "Correspondence threshold: lower it to recover missed tracks, raise it to "
+        "mitigate false correspondences."
+    ),
+    "thr_div": (
+        "Division threshold: lower it to recover missed divisions, raise it to mitigate "
+        "false division detection, or set it to 1.0 to disable division detection."
+    ),
+    "segmentation_correction": (
+        "Correct over- and undersegmentation from the division and correspondence "
+        "predictions. Mainly developed for rod-shaped bacteria, so disable it for round "
+        "objects or very dense regions."
+    ),
+    "radius": (
+        "Largest displacement of an object between two frames, in pixels or as a "
+        "multiple of the expected cell size ('2.5x'). Empty keeps the trained value."
+    ),
+    "prune_param": (
+        "Parameter of the pruning method: an area overlap threshold for 'Overlap', a "
+        "scaling factor for 'Ellipse' and 'Circle'."
+    ),
+    "preview_cell": (
+        "Cell to outline, by label. 0 takes the one closest to the frame center."
+    ),
+    "show_radius": "Outline the search region of one cell in the current frame.",
+    "num_workers": (
+        "Worker processes for feature extraction. Worth raising on long or very dense "
+        "sequences. More than 8 was not worth it in tests."
+    ),
+    "batch_size": (
+        "Subgraphs per prediction batch. Raise it on a machine with memory to spare."
+    ),
+    "device": "Device to run on. Detected by default.",
+    "use_patches": (
+        "Tile each frame instead of building one whole-frame graph. Needed when a full "
+        "frame exceeds memory."
+    ),
+    "patch_size": "Edge length of a tile, in pixels.",
+    "cache_mode": (
+        "Caches graph and features (under 1 GB) to save memory and reuse them across "
+        "runs. "
+        "'In memory' keeps no files, 'Session' lasts until napari closes, and "
+        "'Directory' reuses an existing cache."
+    ),
+    "cache_dir": "Directory the features are cached in.",
+    "use_output": "Write the results to disk as well as adding them as layers.",
+    "output_dir": "Directory to write the results to.",
+    "export_format": (
+        "Layout of the results: 'ctc' for a sequence directory, 'flat' for "
+        "'{id}_tracks.csv' plus '{id}_tracks.tif'."
+    ),
+    "export_suffix": "Appended to the sequence id during export.",
+}
+HELP = {key: textwrap.fill(text, TOOLTIP_WIDTH) for key, text in _HELP_TEXTS.items()}
 
-# materialising a lazily loaded layer this large will likely exhaust memory
+# materialising a lazy layer this large will likely exhaust memory
 LARGE_INPUT_BYTES = 8 * 1024**3
 
 
@@ -135,167 +190,225 @@ def _shape(layer) -> tuple[int, ...]:
     return tuple(data.shape)
 
 
-def _wrapping_label(value: str = "") -> Label:
+def _wrapping_label(value: str = "", *, visible: bool = True) -> Label:
     """A Label that breaks lines, so long help text does not pin the dock pane wide."""
-    label = Label(value=value)
+    label = Label(value=value, visible=visible)
     label.native.setWordWrap(True)
+    # magicgui's Qt Label is Fixed/Fixed, so it never shrinks below its unwrapped text
+    policy = QSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
+    policy.setHeightForWidth(True)
+    label.native.setSizePolicy(policy)
+    label.native.setMinimumWidth(1)
+    # without this the label asks for its one-word-per-line height at a width of 1px
+    label.native.setMinimumHeight(label.native.fontMetrics().height())
     return label
 
 
 class BacLCTWidget(Container):
     """Track bacteria in an image + segmentation layer pair and add the results back."""
 
-    # napari injects the viewer by matching the parameter name or the literal annotation
-    # string, so neither may be renamed or shortened.
+    # napari matches the parameter name and the annotation string, rename neither
     def __init__(self, napari_viewer: napari.viewer.Viewer):
         """Build the widget and bind it to `napari_viewer`."""
         self._viewer = napari_viewer
         self._worker = None
         self._cancel: CancelToken | None = None
-        # outcome of the last run, kept so _refresh() does not clear it
+        # last run's outcome, kept across _refresh()
         self._outcome: str = ""
-        # the segmentation the running job was started on, so a layer switch mid-run
-        # cannot misname or misplace its results
+        # segmentation the running job started on, in case the selection changes
         self._run_layer: Labels | None = None
         self._result_layers: list = []
-        # feature cache shared by every run of this session, released with the widget
         self._session_cache: tempfile.TemporaryDirectory | None = None
-        # model the search radius was last seeded from
         self._seeded_model: str | None = None
 
+        self._title = Label(value="<b>BacLCT</b>")
         self._image_layer = create_widget(
             annotation="napari.layers.Image", label="Image layer"
         )
         self._labels_layer = create_widget(
             annotation="napari.layers.Labels", label="Segmentation"
         )
-        self._channel = SpinBox(label="Channel", min=0, value=0, visible=False)
+        self._channel = SpinBox(
+            label="Channel", min=0, value=0, visible=False, tooltip=HELP["channel"]
+        )
 
         self._model_source = ComboBox(
-            label="Model", choices=["Pretrained", "From path"], value="Pretrained"
+            label="Model",
+            choices=["Pretrained", "From path"],
+            value="Pretrained",
+            tooltip=HELP["model_source"],
         )
         self._pretrained = ComboBox(
             label="", choices=PRETRAINED_MODELS, value=PRETRAINED_MODELS[0]
         )
         self._model_help = _wrapping_label()
-        self._model_path = FileEdit(label="Model path", mode="d", visible=False)
+        self._model_path = FileEdit(
+            label="Model path", mode="d", visible=False, tooltip=HELP["model_path"]
+        )
         self._resolved_model = Label(value="")
 
         self._thr_corr = FloatSpinBox(
-            label="Correspondence threshold", value=0.50, min=0.0, max=1.0, step=0.05
+            label="Correspondence",
+            value=0.50,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            tooltip=HELP["thr_corr"],
         )
         self._thr_div = FloatSpinBox(
-            label="Division threshold", value=0.30, min=0.0, max=1.0, step=0.05
+            label="Division",
+            value=0.30,
+            min=0.0,
+            max=1.0,
+            step=0.05,
+            tooltip=HELP["thr_div"],
         )
-        self._seg_correction = CheckBox(value=True, text="Segmentation correction")
+        self._seg_correction = CheckBox(
+            value=True,
+            text="Segmentation correction",
+            tooltip=HELP["segmentation_correction"],
+        )
 
-        self._radius = LineEdit(label="Search radius", value=DEFAULT_RADIUS)
+        self._radius = LineEdit(
+            label="Search radius", value=DEFAULT_RADIUS, tooltip=HELP["radius"]
+        )
+        # tooltip is set per method, in _refresh()
         self._prune_method = ComboBox(
             label="Edge pruning", choices=PRUNE_CHOICES, value="default"
         )
-        self._prune_help = _wrapping_label()
         self._prune_param = FloatSpinBox(
-            value=DEFAULT_PRUNE_PARAM, **PRUNE_PARAM_SPECS["default"]
+            value=DEFAULT_PRUNE_PARAM,
+            tooltip=HELP["prune_param"],
+            **PRUNE_PARAM_SPECS["default"],
         )
-        # 0 previews the centermost cell, any other value previews that label
-        self._preview_cell = SpinBox(label="Preview cell", value=0, min=0, max=1_000_000)
-        self._show_radius = PushButton(text="Show graph radius")
+        self._preview_cell = SpinBox(
+            label="Preview cell",
+            value=0,
+            min=0,
+            max=1_000_000,
+            tooltip=HELP["preview_cell"],
+        )
+        self._show_radius = PushButton(
+            text="Show graph radius", tooltip=HELP["show_radius"]
+        )
         self._radius_legend = Label(value=RADIUS_LEGEND, visible=False)
 
-        self._num_jobs = SpinBox(label="Parallel jobs", value=1, min=1, max=16)
-        self._num_workers_encode = SpinBox(label="Encoder workers", value=2, min=0, max=8)
-        self._batch_size = SpinBox(label="Batch size", value=1, min=1, max=16)
-        self._device = ComboBox(label="Device", choices=_available_devices())
+        self._num_workers = SpinBox(
+            label="Workers", value=0, min=0, max=8, tooltip=HELP["num_workers"]
+        )
+        self._batch_size = SpinBox(
+            label="Batch size", value=1, min=1, max=16, tooltip=HELP["batch_size"]
+        )
+        self._device = ComboBox(
+            label="Device", choices=_available_devices(), tooltip=HELP["device"]
+        )
 
-        self._use_patches = CheckBox(value=False, text="Tile into patches")
+        self._use_patches = CheckBox(
+            value=False, text="Tile into patches", tooltip=HELP["use_patches"]
+        )
         self._patch_size = SpinBox(
-            label="Patch size", value=256, min=16, max=4096, visible=False
+            label="Patch size",
+            value=256,
+            min=16,
+            max=4096,
+            visible=False,
+            tooltip=HELP["patch_size"],
         )
 
         self._cache_mode = ComboBox(
-            label="Feature cache", choices=CACHE_MODES, value="Session"
+            label="Feature cache",
+            choices=CACHE_MODES,
+            value="Session",
+            tooltip=HELP["cache_mode"],
         )
-        self._cache_dir = FileEdit(label="", mode="d", visible=False)
-        self._cache_help = _wrapping_label(CACHE_HELP)
-        self._use_output = CheckBox(value=False, text="Output directory")
-        self._output_dir = FileEdit(label="", mode="d", visible=False)
+        self._cache_dir = FileEdit(
+            label="", mode="d", visible=False, tooltip=HELP["cache_dir"]
+        )
+        self._use_output = CheckBox(
+            value=False, text="Output directory", tooltip=HELP["use_output"]
+        )
+        self._output_dir = FileEdit(
+            label="", mode="d", visible=False, tooltip=HELP["output_dir"]
+        )
         self._export_format = ComboBox(
-            label="Format", choices=["flat", "ctc"], value="flat", visible=False
+            label="Format",
+            choices=["flat", "ctc"],
+            value="flat",
+            visible=False,
+            tooltip=HELP["export_format"],
         )
         self._export_suffix = LineEdit(
-            label="Suffix", value=DEFAULT_SUFFIX["flat"], visible=False
+            label="Suffix",
+            value=DEFAULT_SUFFIX["flat"],
+            visible=False,
+            tooltip=HELP["export_suffix"],
         )
 
         self._run = PushButton(text="Start tracking")
         self._cancel_button = PushButton(text="Cancel", enabled=False)
         self._progress = ProgressBar(value=0, min=0, max=100, visible=False)
-        self._status = _wrapping_label()
+        self._status = _wrapping_label(visible=False)
 
-        top_widgets = [
-            Label(value="<b>BacLCT</b>"),
-            self._image_layer,
-            self._channel,
-            self._labels_layer,
-            self._model_source,
-            self._pretrained,
-            self._model_path,
-            self._model_help,
-            self._resolved_model,
-        ]
-        # held out of the flat list: _insert_additional_parameters folds these into the
-        # collapsible section after construction
+        # parameters of the collapsible section, kept out of the flat list
         self._tracking_group = Container(
             widgets=[
-                _wrapping_label(TRACKING_HELP),
                 self._thr_corr,
                 self._thr_div,
                 self._seg_correction,
                 self._radius,
                 self._prune_method,
-                self._prune_help,
                 self._prune_param,
                 self._preview_cell,
                 self._show_radius,
-                self._radius_legend,
             ]
         )
         self._runtime_group = Container(
-            widgets=[
-                _wrapping_label(RUNTIME_HELP),
-                self._num_jobs,
-                self._num_workers_encode,
-                self._batch_size,
-                self._device,
-            ]
+            widgets=[self._num_workers, self._batch_size, self._device]
         )
-        io_widgets = [
-            self._use_patches,
-            self._patch_size,
-            self._cache_mode,
-            self._cache_dir,
-            self._cache_help,
-            self._use_output,
-            self._output_dir,
-            self._export_format,
-            self._export_suffix,
-        ]
-        action_widgets = [
-            self._run,
-            self._cancel_button,
-            self._progress,
-            self._status,
+        self._additional_section = self._build_additional_parameters()
+
+        # 'row' goes through magicgui, which puts a label column in front of it. 'text'
+        # is inserted into the layout directly and spans the pane
+        items = [
+            ("text", self._title.native),
+            ("row", self._image_layer),
+            ("row", self._channel),
+            ("row", self._labels_layer),
+            ("row", self._model_source),
+            ("row", self._pretrained),
+            ("row", self._model_path),
+            ("text", self._model_help.native),
+            ("text", self._resolved_model.native),
+            ("text", self._additional_section),
+            ("row", self._use_patches),
+            ("row", self._patch_size),
+            ("row", self._cache_mode),
+            ("row", self._cache_dir),
+            ("row", self._use_output),
+            ("row", self._output_dir),
+            ("row", self._export_format),
+            ("row", self._export_suffix),
+            ("row", self._run),
+            ("row", self._cancel_button),
+            ("row", self._progress),
+            ("text", self._status.native),
         ]
         super().__init__(
-            widgets=[*top_widgets, *io_widgets, *action_widgets], scrollable=True
+            widgets=[widget for kind, widget in items if kind == "row"], scrollable=True
         )
-        # the inner content widget, for our own layout edits. napari is handed the scroll
-        # area instead, via the `native` override below
+        # inner content widget, for the layout edits below. napari is handed the scroll
+        # area instead, via the `native` override
         self._content = self._widget._mgui_get_native_widget()
         self._content._magic_widget = self
-        self._insert_additional_parameters(after=len(top_widgets))
-        # the scroll area stretches the content to the viewport height. without a trailing
-        # stretch the rows spread out to fill it, worst when the section is collapsed
-        self._content.layout().addStretch(1)
+        # ascending, so each insertion finds everything before it already in place.
+        # magicgui counts only its own widgets, so it must not add or remove any after
+        layout = self._content.layout()
+        for index, (kind, widget) in enumerate(items):
+            if kind == "text":
+                layout.insertWidget(index, widget)
+        # without a trailing stretch the rows spread over the viewport height
+        layout.addStretch(1)
+        self._align_labels()
 
         self._image_layer.changed.connect(self._refresh)
         self._labels_layer.changed.connect(self._refresh)
@@ -322,34 +435,58 @@ class BacLCTWidget(Container):
         """
         return self._widget._mgui_get_root_native_widget()
 
-    def _insert_additional_parameters(self, after: int) -> None:
+    def _build_additional_parameters(self) -> QCollapsible:
         """Fold the advanced tracking and runtime parameters into one collapsed section.
 
         They appear as plain titled groups inside it, not nested collapsibles. Tiling,
-        cache, and output stay flat above the run button. `after` is the layout index the
-        section slots into, right below the model block.
+        cache, and output stay flat above the run button.
         """
-        # magicgui pads containers by 11px with 6px between rows, which reads as dead
-        # space once a group is a tight list under a header
+        # magicgui pads containers by 11px with 6px between rows, too loose under a header
         for group in (self._tracking_group, self._runtime_group):
             group.margins = (0, 0, 0, 0)
             group.native.layout().setSpacing(2)
 
         self._tracking_header = Label(value="<b>Tracking parameters</b>")
+        self._tracking_help = _wrapping_label(TRACKING_HELP)
         self._runtime_header = Label(value="<b>Runtime parameters</b>")
+        self._runtime_help = _wrapping_label(RUNTIME_HELP)
 
         section = QCollapsible("Additional parameters")
         section.setCollapsedIcon("▸")
         section.setExpandedIcon("▾")
+        # both default to Qt's 9px, which would indent the section against the form
+        section.layout().setContentsMargins(0, 0, 0, 6)
         section.content().layout().setContentsMargins(0, 0, 0, 0)
         section.addWidget(self._tracking_header.native)
+        section.addWidget(self._tracking_help.native)
         section.addWidget(self._tracking_group.native)
+        section.addWidget(self._radius_legend.native)
         section.addWidget(self._runtime_header.native)
+        section.addWidget(self._runtime_help.native)
         section.addWidget(self._runtime_group.native)
         section.collapse(animate=False)
-        self._additional_section = section
+        return section
 
-        self._content.layout().insertWidget(after, section)
+    def _align_labels(self) -> None:
+        """Give every row of the form and of both groups the same label column.
+
+        magicgui unifies label widths per container and skips the widgets passed to
+        `__init__` altogether, which leaves each row indented by its own label.
+        """
+        measure = use_app().get_obj("get_text_width")
+        rows = [
+            widget
+            for container in (self, self._tracking_group, self._runtime_group)
+            for widget in container
+            if widget._labeled_widget() is not None
+        ]
+        # count both pruning parameter labels, so switching the method cannot move the
+        # column
+        labels = [widget.label for widget in rows]
+        labels += [spec["label"] for spec in PRUNE_PARAM_SPECS.values()]
+        width = max(measure(label) for label in labels)
+        for widget in rows:
+            widget._labeled_widget().label_width = width
 
     # ------------------------------------------------------------------ state
 
@@ -363,6 +500,106 @@ class BacLCTWidget(Container):
         masks = [ly for ly in labels if "mask" in ly.name.lower()]
         if masks or labels:
             self._labels_layer.value = (masks or labels)[0]
+
+    def apply_settings(
+        self,
+        *,
+        model: str | Path | None = None,
+        channel: int | None = None,
+        graph_search_radius: str | None = None,
+        prune_edges_by: str | None = None,
+        prune_param: float | str | None = None,
+        thr_corr: float | None = None,
+        thr_div: float | None = None,
+        segmentation_correction: bool | None = None,
+        device: str | None = None,
+        cache_dir: str | Path | None = None,
+        patch_size: int | None = None,
+        batch_size: int | None = None,
+        num_workers: int | None = None,
+        output_dir: Path | None = None,
+        export_format: str | None = None,
+        export_suffix: str | None = None,
+    ) -> None:
+        """Preset the fields, leaving anything passed as `None` untouched.
+
+        `None` means "leave alone" and never "unset": the CLI defaults `thr_corr`,
+        `thr_div`, and `segmentation_correction` to `None` to follow the model, and a
+        spinbox cannot show that, so an unpassed flag must not overwrite the widget's
+        value.
+
+        Assignment order matters: setting a value triggers `changed`, which runs
+        `_refresh()` before the next line. The model reseeds the radius, the pruning
+        method resets its parameter, and the export format resets the suffix, so each
+        is set before the field it would otherwise overwrite.
+        """
+        if model is not None:
+            if str(model) in PRETRAINED_MODELS:
+                self._model_source.value = "Pretrained"
+                self._pretrained.value = str(model)
+            else:
+                self._model_source.value = "From path"
+                self._model_path.value = Path(model)
+        # after the model, which reseeds the radius
+        if graph_search_radius is not None:
+            # the CLI spells the trained value "trained", the field leaves it empty
+            self._radius.value = (
+                "" if graph_search_radius == "trained" else graph_search_radius
+            )
+
+        if prune_edges_by is not None:
+            self._prune_method.value = prune_edges_by
+
+        takes_param = self._prune_method.value not in PARAMETERLESS_PRUNE_METHODS
+        if prune_param is not None and takes_param:
+            self._prune_param.value = float(prune_param)
+
+        if export_format is not None:
+            self._export_format.value = export_format
+        # after the format, which resets the suffix
+        if export_suffix is not None:
+            self._export_suffix.value = export_suffix
+
+        if channel is not None:
+            self._channel.value = channel
+        if thr_corr is not None:
+            self._thr_corr.value = thr_corr
+        if thr_div is not None:
+            self._thr_div.value = thr_div
+        if segmentation_correction is not None:
+            self._seg_correction.value = segmentation_correction
+        if device is not None:
+            self._device.value = device
+        if num_workers is not None:
+            self._num_workers.value = num_workers
+        if batch_size is not None:
+            self._batch_size.value = batch_size
+
+        if cache_dir is not None:
+            self._apply_cache_dir(cache_dir)
+        if patch_size is not None:
+            self._use_patches.value = True
+            self._patch_size.value = patch_size
+        if output_dir is not None:
+            self._use_output.value = True
+            self._output_dir.value = Path(output_dir)
+
+        self._refresh()
+
+    def _apply_cache_dir(self, cache_dir: str | Path) -> None:
+        """Map the CLI's --cache-dir vocabulary onto the cache mode combo.
+
+        'temp' becomes 'Session', the closest the widget has. The match is loose: the
+        CLI's temporary directory lasts one run, the widget's lasts the napari session,
+        which is what makes a re-track with changed thresholds cheap.
+        """
+        if cache_dir == "memory":
+            self._cache_mode.value = "In memory"
+        elif cache_dir == "temp":
+            self._cache_mode.value = "Session"
+        else:
+            self._cache_mode.value = "Directory"
+            self._cache_dir.value = Path(cache_dir)
 
     @property
     def model_name(self) -> str:
@@ -380,13 +617,12 @@ class BacLCTWidget(Container):
         """Why tracking cannot start, or `None` when it can."""
         if self._labels_layer.value is None:
             return "Select a segmentation layer."
-        # both shipped models consume image features, so images are never optional
+        # both shipped models consume image features
         if self._image_layer.value is None:
             return "BacLCT requires an image layer."
         if self._model_source.value == "From path" and not self._model_path.value:
             return "Select a model directory."
-        # an untouched FileEdit reads as Path('.'), which would cache into the working
-        # directory of whatever launched napari
+        # an untouched FileEdit reads as Path('.'), napari's working directory
         if (
             self._cache_mode.value == "Directory"
             and Path(self._cache_dir.value) == Path()
@@ -417,8 +653,11 @@ class BacLCTWidget(Container):
         self._resolved_model.value = (
             "" if from_path else f"Model: <code>{self.model_name}</code>"
         )
+        self._resolved_model.visible = not from_path
 
-        self._prune_help.value = PRUNE_HELP[self._prune_method.value]
+        self._prune_method.tooltip = textwrap.fill(
+            PRUNE_HELP[self._prune_method.value], TOOLTIP_WIDTH
+        )
         self._prune_param.visible = (
             self._prune_method.value not in PARAMETERLESS_PRUNE_METHODS
         )
@@ -436,9 +675,12 @@ class BacLCTWidget(Container):
         self._run.enabled = reason is None and not running
         self._show_radius.enabled = self._labels_layer.value is not None and not running
         if not running:
-            # a validation hint takes precedence, but must not wipe the outcome of the
-            # last run: _refresh() runs again as the worker finishes
-            self._status.value = reason or self._outcome or ""
+            self._set_status(reason or self._outcome or "")
+
+    def _set_status(self, text: str) -> None:
+        """Show a message, or take the row back when there is nothing to report."""
+        self._status.value = text
+        self._status.visible = bool(text)
 
     def _sync_prune_param(self) -> None:
         """Give the pruning parameter the range and label its method actually uses."""
@@ -448,18 +690,25 @@ class BacLCTWidget(Container):
             return
 
         self._prune_param.label = spec["label"]
-        # widen before narrowing, so the pending value can never sit outside both ranges
+        # widen before narrowing, so the value never sits outside both ranges
         self._prune_param.min = min(self._prune_param.min, spec["min"])
         self._prune_param.max = max(self._prune_param.max, spec["max"])
         self._prune_param.value = PRUNE_PARAM_DEFAULTS.get(method, DEFAULT_PRUNE_PARAM)
         self._prune_param.min, self._prune_param.max = spec["min"], spec["max"]
         self._prune_param.step = spec["step"]
+        # magicgui re-unifies the group whenever one of its labels changes
+        self._align_labels()
 
     # ------------------------------------------------------------------ inputs
 
-    def _image_data(self) -> np.ndarray:
-        """Image stack as `(T, ...)`, with the channel axis sliced off if present."""
-        image = np.asarray(self._image_layer.value.data)
+    def _image_data(self) -> da.Array | np.ndarray:
+        """Image stack as `(T, ...)`, with the channel axis sliced off if present.
+
+        The layer's own array is passed through without materializing it: `track()`
+        takes dask, prefers it for long sequences, and slicing a channel off keeps it
+        lazy.
+        """
+        image = self._image_layer.value.data
         if self.is_multichannel():
             image = image[:, self._channel.value]
         return image
@@ -477,15 +726,8 @@ class BacLCTWidget(Container):
         self._export_suffix.value = DEFAULT_SUFFIX[self._export_format.value]
 
     def _build_params(self) -> TrackParams:
-        masks = np.asarray(self._labels_layer.value.data)
+        masks = self._labels_layer.value.data
         images = self._image_data()
-
-        tracker_overrides: dict = {
-            "thr_corr": self._thr_corr.value,
-            "thr_div": self._thr_div.value,
-        }
-        if not self._seg_correction.value:
-            tracker_overrides["segmentation_correction"] = None
 
         output_name = self._output_name()
         return TrackParams(
@@ -494,17 +736,16 @@ class BacLCTWidget(Container):
             model=self._model_arg(),
             sequence_id=output_name,
             export_suffix=self._export_suffix.value or None,
-            # None lets the model decide, which is what every registered model wants too
-            classify_states=None,
             graph_search_radius=self._search_radius(),
             prune_edges_by=self._prune_edges_by(),
-            tracker_overrides=tracker_overrides,
+            thr_corr=self._thr_corr.value,
+            thr_div=self._thr_div.value,
+            segmentation_correction=self._seg_correction.value,
             cache_dir=self._cache_dir_param(),
             output_dir=(Path(self._output_dir.value) if self._use_output.value else None),
             export_format=self._export_format.value,
             device=self._device.value,
-            num_jobs=self._num_jobs.value,
-            num_workers_encode=self._num_workers_encode.value,
+            num_workers=self._num_workers.value,
             batch_size=self._batch_size.value,
             patch_size=(self._patch_size.value if self._use_patches.value else None),
         )
@@ -628,7 +869,8 @@ class BacLCTWidget(Container):
 
     def _on_show_radius(self) -> None:
         """Outline the search region of one cell in the current frame."""
-        masks = np.asarray(self._labels_layer.value.data)
+        # passed through unmaterialised, the helpers index one frame at a time
+        masks = self._labels_layer.value.data
         if masks.ndim != 3:
             show_warning("The radius preview supports 2D + time segmentations only.")
             return
@@ -639,8 +881,8 @@ class BacLCTWidget(Container):
             return
 
         t = int(self._viewer.dims.current_step[0])
-        # 'Default' defers to the model, so resolve its own pruning to preview a region.
-        # 'Off' has no region, leaving the search circle as the only shape
+        # 'Default' defers to the model, so resolve its pruning for the preview. 'Off'
+        # has no region and leaves the search circle as the only shape
         prune = self._prune_edges_by()
         from_default = prune is None
         preview_prune = self._default_prune_edges_by() if from_default else prune
@@ -660,7 +902,7 @@ class BacLCTWidget(Container):
             show_warning(f"No cells in frame {t}.")
             return
 
-        # remove every previous preview, not just one by name, so nothing can accumulate
+        # remove all previous previews, however many have piled up
         for layer in [ly for ly in self._viewer.layers if ly.name == RADIUS_LAYER_NAME]:
             self._viewer.layers.remove(layer)
         self._viewer.add_shapes(
@@ -689,7 +931,12 @@ class BacLCTWidget(Container):
 
         self._run_layer = self._labels_layer.value
         params = self._build_params()
-        nbytes = params.images.nbytes + params.masks.nbytes
+        # only an eager stack is resident, a lazy layer is read frame by frame
+        nbytes = sum(
+            stack.nbytes
+            for stack in (params.images, params.masks)
+            if not isinstance(stack, da.Array)
+        )
         if nbytes > LARGE_INPUT_BYTES:
             show_warning(
                 f"Loading {nbytes / 1024**3:.1f} GiB into memory. This may be slow."
@@ -705,7 +952,7 @@ class BacLCTWidget(Container):
         self._outcome = ""
         self._progress.value = 0
         self._progress.visible = True
-        self._status.value = "Starting..."
+        self._set_status("Starting...")
         self._cancel_button.enabled = True
         self._refresh()
         self._worker.start()
@@ -718,20 +965,20 @@ class BacLCTWidget(Container):
         """
         if self._cancel is not None:
             self._cancel.cancel()
-        self._status.value = "Cancelling..."
+        self._set_status("Cancelling...")
         self._cancel_button.enabled = False
 
     def _on_progress(self, event) -> None:
         if event is None:  # keepalive yield
             return
         self._progress.value = int(event.fraction * 100)
-        self._status.value = event.label
+        self._set_status(event.label)
 
     def _on_finished(self, result: TrackResult | None) -> None:
-        # a cancelled run returns None rather than erroring, so no layers are added
+        # a cancelled run returns None instead of erroring
         if result is None:
             self._outcome = "Cancelled."
-            self._status.value = self._outcome
+            self._set_status(self._outcome)
             return
 
         labels = self._run_layer
@@ -743,13 +990,13 @@ class BacLCTWidget(Container):
             labels.name if labels is not None else "BacLCT",
             scale=labels.scale if labels is not None else None,
         )
-        # the tracked-mask layer overlaps the input segmentation, so hide the latter
+        # the tracked-mask layer overlaps the input segmentation
         if labels is not None:
             labels.visible = False
         self._progress.value = 100
         n_tracks = result.tracks["label"].n_unique()
         self._outcome = f"Done: {n_tracks} tracks."
-        self._status.value = self._outcome
+        self._set_status(self._outcome)
 
     def _clear_results(self) -> None:
         """Drop the layers of the previous run, so tracking again replaces them."""
@@ -760,7 +1007,7 @@ class BacLCTWidget(Container):
 
     def _on_error(self, err: Exception) -> None:
         self._outcome = f"Failed: {err}"
-        self._status.value = self._outcome
+        self._set_status(self._outcome)
         show_warning(f"BacLCT tracking failed: {err}")
 
     def _on_done(self) -> None:

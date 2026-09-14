@@ -40,7 +40,9 @@ from baclct.io import (
     find_lineage_file,
     load_images_and_masks,
 )
+from baclct.io.load import _check_instance_labels
 from baclct.utils.data import (
+    close_worker_pool,
     col_to_tensor,
     collect,
     default_multiprocessing_context,
@@ -58,6 +60,9 @@ if TYPE_CHECKING:
     from baclct.utils.spacing import SpacingLike
 
 logger = get_pylogger(__name__)
+
+# required so that `.. automodule::` does not document other things (e.g., `cdist`)
+__all__ = ["GraphDataset", "GraphPatchDataset", "TrackingDataset"]
 
 
 class GraphDataset(Dataset):
@@ -260,6 +265,7 @@ class GraphDataset(Dataset):
             )
             assert len(self.images) > 0, f"Could not find images at {self.data_dir}."
         assert len(self.masks) > 0, f"Could not find masks at {self.data_dir}."
+        _check_instance_labels(self.masks)
 
         self.trust_cache = trust_cache
         self.dataset_meta = (
@@ -479,6 +485,8 @@ class GraphDataset(Dataset):
         """
         assert isinstance(images, (da.Array, np.ndarray))
         assert isinstance(masks, (da.Array, np.ndarray))
+        if deep_feature_extractor is not None:
+            _warn_deep_worker_layout(images, deep_feature_extractor.num_workers)
         kwargs: dict[str, Any] = {
             "data_dir": None,
             "feature_dir": feature_dir,
@@ -1731,6 +1739,11 @@ class TrackingDataset(L.LightningDataModule):
             ):
                 self.deep_feat_extractor._unload_encoder()
 
+            # joblib's worker pool is shared between multiple sequences and between node
+            # and edge feature finding. closing it here saves up to several GB of memory.
+            # it is not required during training. would close automatically after 10min.
+            close_worker_pool()
+
     def _load_splits(self) -> list[dict[Literal["train", "val", "test"], list[str]]]:
         """Load CV splits for each configured sequence instance.
 
@@ -1949,9 +1962,9 @@ class TrackingDataset(L.LightningDataModule):
     def _get_train_sampler(self, concat_dataset: ConcatDataset) -> WeightedRandomSampler:
         """Weighted sampler over sequences of different sizes.
 
-        Sequences are sampled with probability proportional to `size ** sampling_alpha`
+        Sequences are sampled with probability proportional to ``size ** sampling_alpha``
         (alpha 0 = equal per sequence, 1 = proportional to size), floored at
-        `sampling_floor`.
+        ``sampling_floor``.
         """
         subsets = cast("list[GraphDataset]", concat_dataset.datasets)
         lengths = np.array([len(d) for d in subsets], dtype=float)
@@ -2106,3 +2119,28 @@ def _run_deep_extractor(
         # other extractors might validate differently
         kwargs["validate"] = validate
     return extractor(**kwargs)
+
+
+# an in-memory stack above this size is copied into every deep-feature crop worker
+_LARGE_IMAGE_STACK_BYTES = 1024**3
+
+
+def _warn_deep_worker_layout(images: da.Array | np.ndarray, num_workers: int) -> None:
+    """Warn when image is too large for eager loading or not chunked properly."""
+    if num_workers <= 0:
+        return
+    if isinstance(images, da.Array):
+        if images.chunksize[0] != 1:
+            logger.warning(
+                f"Image chunks are {images.chunksize} instead of one frame per chunk, "
+                f"so every crop worker item decodes more than the frame it needs. "
+                f"Rechunk to (1, ...) before passing images in, e.g. via "
+                f"`load_images_and_masks(lazy=True)`."
+            )
+    elif images.nbytes > _LARGE_IMAGE_STACK_BYTES:
+        logger.warning(
+            f"Image stack is {images.nbytes / 1024**3:.2f} GB and will be pickled into "
+            f"each of the {num_workers} deep-feature worker(s). If low on memory, it is "
+            "recommended to use a lazy dask array, e.g. via "
+            "`load_images_and_masks(lazy=True)`."
+        )

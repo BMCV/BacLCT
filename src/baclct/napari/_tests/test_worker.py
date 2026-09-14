@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import time
 
-import numpy as np
-import polars as pl
 import pytest
 
 from baclct.napari import _worker
@@ -21,32 +19,15 @@ from baclct.napari._worker import (
 )
 
 
-def _fake_tracks() -> pl.DataFrame:
-    return pl.DataFrame(
-        {
-            "label": [1],
-            "t": [0],
-            "centroid-0": [1.0],
-            "centroid-1": [1.0],
-            "parent": [0],
-        }
-    )
-
-
 @pytest.fixture
-def params() -> TrackParams:
-    masks = np.zeros((2, 8, 8), dtype=np.uint16)
-    masks[:, 2:4, 2:4] = 1
+def params(images, masks) -> TrackParams:
     return TrackParams(
-        images=masks.astype(np.uint16),
-        masks=masks,
-        model="baclct_track",
-        sequence_id="seq",
+        images=images, masks=masks, model="baclct_track", sequence_id="seq"
     )
 
 
 @pytest.fixture
-def fake_pipeline(monkeypatch, tmp_path):
+def fake_pipeline(monkeypatch, tmp_path, tracks):
     """Replace model resolution and tracking with fast fakes that report progress."""
     monkeypatch.setattr(
         _worker.BacLCT, "download_model", staticmethod(lambda *a, **k: tmp_path)
@@ -58,12 +39,12 @@ def fake_pipeline(monkeypatch, tmp_path):
             progress(stage="features", current=i, total=3, message="Extracting")
             time.sleep(0.01)
         progress(stage="tracking", current=1, total=1, message="Linking")
-        return masks, _fake_tracks()
+        return masks, tracks
 
     monkeypatch.setattr(_worker.BacLCT, "track", fake_track)
 
 
-def test_worker_reports_progress_and_returns(qtbot, params, fake_pipeline):
+def test_worker_reports_progress_and_returns(qtbot, params, fake_pipeline, tracks):
     worker = tracking_worker(params, CancelToken())
 
     events: list[ProgressEvent] = []
@@ -75,7 +56,7 @@ def test_worker_reports_progress_and_returns(qtbot, params, fake_pipeline):
         worker.start()
 
     assert len(results) == 1
-    assert results[0].tracks.equals(_fake_tracks())
+    assert results[0].tracks.equals(tracks)
     assert results[0].masks_tracked.shape == params.masks.shape
 
     reported = [e for e in events if e is not None]

@@ -10,11 +10,14 @@ import pytest
 import torch
 import torch.nn as nn
 from conftest import _get_mock_edges
+from joblib.externals.loky import reusable_executor
+from polars.testing import assert_frame_equal
 from scipy.ndimage import distance_transform_edt
 from skimage.morphology import dilation, disk
 from sklearn.preprocessing import minmax_scale
 from torch.utils.data import DataLoader
 
+from baclct.features import extractors
 from baclct.features.extractors import (
     CellLevelExtractor,
     HandcraftedExtractor,
@@ -24,7 +27,7 @@ from baclct.features.normalization import scale_relative_size
 from baclct.features.patches import PatchWeighting
 from baclct.io import dataset_identity
 from baclct.models.encoder import compute_patch_weights, normalize_imagenet
-from baclct.utils.data import collect, get_multiprocessing_context
+from baclct.utils.data import close_worker_pool, collect, get_multiprocessing_context
 from baclct.utils.spacing import needs_spacing
 
 
@@ -782,6 +785,51 @@ def test_cell_level_cache_reuses_memmap(tmp_path):
     extractor._load(cache_dir, [1], dataset_meta=None)
     assert len(extractor._open_embedding_caches) == 1
     assert extractor._open_embedding_caches[str(cache_dir)] is first
+
+
+def test_worker_count(monkeypatch):
+    """The worker count passes through, except inside a worker, where it must not."""
+    extractor = CellLevelExtractor.__new__(CellLevelExtractor)
+    extractor.num_workers = 4
+    assert extractor._worker_count() == 4
+
+    # a nested `DataLoader` would try to fork its own forkserver pool, so avoid it
+    monkeypatch.setattr(extractors, "get_worker_info", lambda: object())
+    assert extractor._worker_count() == 0
+
+
+@pytest.mark.slow
+def test_handcrafted_leaves_its_worker_pool_running(toy_images, toy_masks):
+    """`_compute` no longer closes the pool itself: the caller decides when to.
+
+    Chaining `HandcraftedExtractor` over many sequences (`TrackingDataset.prepare_data()`,
+    a chained CLI run) reuses one pool across the whole run and avoids paying worker
+    start-up again on every sequence. A sweep over real sequences
+    (`final-review/throughput/run_chain.py`) measured this roughly halving the
+    per-sequence `features` stage after the first sequence. Releasing the pool is still
+    worth doing for a standalone call (`close_worker_pool()`, called unconditionally by
+    `BacLCT.track()` once feature extraction ends), just not from inside `_compute`.
+    """
+    extractor = HandcraftedExtractor(props=["area"], n_jobs=2, verbose=False)
+    parallel_feats = extractor._compute(images=toy_images, masks=toy_masks)
+
+    executor = reusable_executor._executor
+    assert executor is not None, "the stage never started a pool"
+    assert not executor._flags.shutdown
+
+    # the pool must not change the features either
+    serial = HandcraftedExtractor(props=["area"], n_jobs=1, verbose=False)
+    assert_frame_equal(
+        parallel_feats, serial._compute(images=toy_images, masks=toy_masks)
+    )
+
+    close_worker_pool()
+    assert reusable_executor._executor._flags.shutdown
+
+    # closing again must not start a pool just to shut it down
+    reusable_executor._executor = None
+    close_worker_pool()
+    assert reusable_executor._executor is None
 
 
 @pytest.mark.parametrize("num_workers", [0, pytest.param(2, marks=pytest.mark.slow)])

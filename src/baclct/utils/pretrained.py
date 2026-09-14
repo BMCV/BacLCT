@@ -1,6 +1,6 @@
 """Resolution and download of pre-trained BacLCT models.
 
-Three models ship with BacLCT, all of which utilize DINO-pretrained ViT features:
+Three models ship with BacLCT, all of which use DINO-pretrained ViT features:
 
     - `baclct_track`: tracking, bright field and phase contrast. The default.
     - `baclct_spore_classification_bf`: tracking and life cycle state classification,

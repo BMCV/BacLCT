@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import dask.array as da
@@ -20,11 +21,13 @@ from baclct.io import (
     export_tracking_results_ctc,
     find_lineage_file,
     get_percentiles,
+    get_sequences_from_path,
     get_sequences_from_split,
     load_images_and_masks,
     load_lineage,
     node_preds_to_df,
 )
+from baclct.io.load import _read_frames
 
 
 def test_get_sequences_from_split(tmp_path: Path):
@@ -143,13 +146,104 @@ def test_load_images_and_masks_layouts(
     )
 
     assert isinstance(lazy_imgs, da.Array)
-    assert isinstance(lazy_masks, da.Array)
+    # one frame per chunk, which is what the patch croppers need to run in workers
     assert lazy_imgs.chunks[0] == (1,) * len(toy_images)
     assert lazy_masks.chunks[0] == (1,) * len(toy_masks)
     np.testing.assert_array_equal(np.asarray(lazy_imgs), toy_images)
     np.testing.assert_array_equal(np.asarray(lazy_masks), toy_masks)
     np.testing.assert_array_equal(np.asarray(eager_imgs), toy_images)
     np.testing.assert_array_equal(np.asarray(eager_masks), toy_masks)
+
+
+def test_lazy_frames_survive_pickling(
+    tmp_path: Path, toy_images: np.ndarray, toy_masks: np.ndarray
+):
+    """A lazy frame pickles, which is how the extractor pools receive one.
+
+    An open file and its lock cannot be pickled, so a graph holding one raises "Could
+    not pickle the task to send it to the workers" as soon as `--num-workers` is above
+    zero. BioIO reopens the file per chunk instead, which is also what makes reading it
+    from several threads at once safe.
+    """
+    # the reader decides this, so testing one layout is enough
+    data_dir = _write_layout(tmp_path, "ctc", toy_images, toy_masks)
+    images, masks = load_images_and_masks(data_dir, "01", data_format="ctc", lazy=True)
+    assert isinstance(images, da.Array)
+
+    for frames, expected in ((images, toy_images), (masks, toy_masks)):
+        restored = pickle.loads(pickle.dumps(frames[1]))
+        np.testing.assert_array_equal(np.asarray(restored), expected[1])
+
+
+@pytest.mark.parametrize("lazy", [True, False], ids=["lazy", "eager"])
+@pytest.mark.parametrize(
+    "written",
+    [
+        # a plain grayscale sequence, which BioIO reads back along z
+        (5, 8, 12),
+        # tifffile stores a three- or four-frame stack as RGB planes unless told
+        # otherwise, so BioIO reports its frames as samples of one image
+        (3, 8, 12),
+        # a single frame, which has nothing to stream
+        (1, 8, 12),
+        # frames that are volumes, which BioIO reports as channels
+        (4, 3, 8, 12),
+    ],
+    ids=["stack", "rgb", "one-frame", "volumes"],
+)
+def test_frames_are_read_along_the_axes_they_were_written(
+    tmp_path: Path, written: tuple[int, ...], lazy: bool
+):
+    """Whatever a tif claims its axes are, its frames come back leading and in order."""
+    source = tmp_path / "seq.tif"
+    expected = np.arange(int(np.prod(written)), dtype=np.uint16).reshape(written)
+    tifffile.imwrite(source, expected)  # no photometric, as a naive caller writes it
+
+    frames = _read_frames(source, lazy=lazy)
+
+    assert frames.shape == expected.shape
+    np.testing.assert_array_equal(np.asarray(frames), expected)
+    if isinstance(frames, da.Array):
+        # one frame per chunk is what the extractor pools read
+        assert frames.chunks[0] == (1,) * len(frames)
+
+
+@pytest.mark.parametrize(
+    ("data_format", "distractor", "other_seg", "expected_for_other_seg"),
+    [
+        # a CTC run writing into its own data dir must not add 'baclct' as a sequence,
+        # and the suffix varies by annotation type, so the name cannot select it
+        ("ctc", "baclct_results/", "ST", ["01"]),
+        # '01_omnipose_full.tif' is another segmentation of '01', never a sequence
+        # '01_omnipose' left over from splitting on the last '_'
+        ("flat", "01_omnipose_full.tif", "omnipose_full", ["01"]),
+        # a directory without the segmentation is something else in the dataset
+        ("dirs", "reference_positions/", "Omnipose", []),
+    ],
+)
+def test_get_sequences_from_path(
+    tmp_path: Path,
+    toy_images: np.ndarray,
+    toy_masks: np.ndarray,
+    data_format: str,
+    distractor: str,
+    other_seg: str,
+    expected_for_other_seg: list[str],
+):
+    """Sequence ids are keyed on the segmentation, ignoring everything else in the dir."""
+    data_dir = _write_layout(tmp_path, data_format, toy_images, toy_masks)
+    if distractor.endswith("/"):
+        (data_dir / distractor[:-1]).mkdir()
+    else:
+        tifffile.imwrite(data_dir / distractor, toy_masks, photometric="minisblack")
+
+    assert get_sequences_from_path(data_dir, data_format) == ["01"]
+    assert get_sequences_from_path(data_dir, data_format, other_seg) == (
+        expected_for_other_seg
+    )
+
+    with pytest.raises(ValueError, match="Unknown data format"):
+        get_sequences_from_path(data_dir, "zarr")
 
 
 def test_load_images_and_masks_strict(

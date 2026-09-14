@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
 from itertools import chain
 from pathlib import Path
 from typing import Literal, overload
@@ -12,19 +11,51 @@ from typing import Literal, overload
 import dask.array as da
 import numpy as np
 import yaml
-from tifffile import imread
+from bioio import BioImage
+from dask import delayed
 
 from baclct.utils.logger import get_pylogger
 
 logger = get_pylogger(__name__)
 
 
-def get_sequences_from_path(data_dir: Path, data_format: str = "ctc"):
-    """Return available sequence IDs in a CTC dataset folder."""
-    if data_format == "ctc":
-        return sorted({fp.stem.split("_")[0] for fp in data_dir.iterdir() if fp.is_dir()})
+# per layout, the default (image, segmentation) names
+_SOURCE_DEFAULTS = {
+    "ctc": (None, "GT"),
+    "flat": ("images", "masks"),
+    "dirs": ("BF", "Segmentation"),
+}
+DATA_FORMATS = tuple(_SOURCE_DEFAULTS)
 
-    raise NotImplementedError
+# since we are using bioio, reading raw data formats is supported. have to define formats,
+# so that .csv/.txt or other files don't interfere. bioio does not support the files by
+# default, so this will raise and provide instructions for installing the missing readers.
+# only checks for single files -> .zarr is currently ignored
+IMAGE_SUFFIXES = (".tif", ".tiff", ".nd2", ".dv", ".czi", ".lif")
+
+
+def get_sequences_from_path(
+    data_dir: Path, data_format: str = "ctc", segmentation_name: str | None = None
+) -> list[str]:
+    """Return sequence IDs available in a dataset directory."""
+    if data_format not in _SOURCE_DEFAULTS:
+        raise ValueError(f"Unknown data format: {data_format}")
+
+    if data_format == "ctc":
+        subdirs = {fp.name for fp in data_dir.iterdir() if fp.is_dir()}
+        return sorted({name.split("_")[0] for name in subdirs} & subdirs)
+
+    seg_name = segmentation_name or _SOURCE_DEFAULTS[data_format][1]
+    assert seg_name
+    if data_format == "flat":
+        names = set()
+        for suffix in IMAGE_SUFFIXES:
+            tail = f"_{seg_name}{suffix}"
+            names |= {fp.name[: -len(tail)] for fp in data_dir.glob(f"*{tail}")}
+        return sorted(names - {""})
+
+    subdirs = (fp for fp in data_dir.iterdir() if fp.is_dir())
+    return sorted(fp.name for fp in subdirs if (fp / seg_name).exists())
 
 
 def get_sequences_from_split(
@@ -67,7 +98,7 @@ def _histogram_percentiles(
     """Percentiles of an integer sequence, read off a histogram over intensity levels."""
     info = np.iinfo(images.dtype)
     offset = int(info.min)
-    values = images.ravel()  # type: ignore
+    values = images.ravel()
     if offset:
         values = values.astype(np.int64) - offset
 
@@ -145,9 +176,16 @@ def frame_hash(img: np.ndarray | None, msk: np.ndarray | None) -> str:
     return hasher.hexdigest()
 
 
-# frames to sample for `dataset_identity`: first, last, and evenly spaced in between,
-# bounding hash cost on long sequences (e.g. toiam's 800 frames, one tif file each)
-_N_HASH_FRAMES = 16
+# frames to sample for `dataset_identity`/`_check_instance_labels`: first, last, and
+# evenly spaced in between, bounding cost on long sequences.
+_N_CHECK_FRAMES = 16
+
+
+def _sample_frame_indices(n: int) -> list[int]:
+    """Frames checked for label and content hash validation."""
+    return sorted(
+        {int(t) for t in np.linspace(0, n - 1, min(n, _N_CHECK_FRAMES)).astype(int)}
+    )
 
 
 def dataset_identity(
@@ -159,17 +197,11 @@ def dataset_identity(
 ) -> dict:
     """Content identity of an image/mask sequence, used to guard feature caches.
 
-    Hashes a fixed-size, deterministic sample of frames (`_N_HASH_FRAMES`) rather than
-    the whole sequence, so validation cost stays bounded on long sequences. The sampled
-    indices are a pure function of sequence length, so a write and a later validate
-    against the same data always hash the same frames.
+    Hashes a only a fixed-size, deterministic sample of frames (`_N_CHECK_FRAMES`) the so
+    validation cost stays bounded on long sequences.
     """
-    n = len(masks)
-    sample_t = sorted(
-        {int(t) for t in np.linspace(0, n - 1, min(n, _N_HASH_FRAMES)).astype(int)}
-    )
     frame_hashes = {}
-    for t in sample_t:
+    for t in _sample_frame_indices(len(masks)):
         img_t = None
         if images is not None:
             img_t = images[t].compute() if isinstance(images[t], da.Array) else images[t]
@@ -183,6 +215,28 @@ def dataset_identity(
         "masks_shape": list(masks.shape),
         "frame_hashes": frame_hashes,
     }
+
+
+def _check_instance_labels(masks: da.Array | np.ndarray) -> None:
+    """Reject boolean masks and warn if every sampled frame carries a single label."""
+    if masks.dtype == bool:
+        raise ValueError(
+            "Masks must be an instance segmentation with integer labels, got dtype "
+            "bool. Label the connected components first, e.g. skimage.measure.label()."
+        )
+    label_counts = []
+    for t in _sample_frame_indices(len(masks)):
+        labels = np.unique(np.asarray(masks[t]))
+        labels = labels[labels != 0]
+        if labels.size == 0:
+            continue
+        label_counts.append(labels.size)
+    if label_counts and all(count == 1 for count in label_counts):
+        logger.warning(
+            "Every sampled frame of the segmentation only has a single label. If the "
+            "image contains multiple objects, label the connected components first, e.g. "
+            "skimage.measure.label(). Ignore if image only contains a single object."
+        )
 
 
 def dataset_identity_matches(current: dict, cached: dict | None) -> bool:
@@ -204,13 +258,6 @@ _MISSING_MSG = (
     "If you intend to load images or masks only, use strict=False."
 )
 
-# per-format defaults for the image and segmentation source names
-_SOURCE_DEFAULTS = {
-    "ctc": (None, "GT"),
-    "flat": ("images", "masks"),
-    "dirs": ("BF", "Segmentation"),
-}
-
 
 def _ctc_segmentation_dir(data_dir: Path, seq_id: str, segmentation_name: str) -> Path:
     """Locate the CTC segmentation directory, preferring tracking over segmentation."""
@@ -226,6 +273,15 @@ def _ctc_segmentation_dir(data_dir: Path, seq_id: str, segmentation_name: str) -
         logger.debug("Trying base dir.")
         seg_dir = seg_dir.parent
     return seg_dir
+
+
+def _find_source(data_dir: Path, stem: Path | str) -> Path:
+    """The file named `stem` carrying any readable suffix, falling back to '.tif'."""
+    for suffix in IMAGE_SUFFIXES:
+        candidate = data_dir / f"{stem}{suffix}"
+        if candidate.exists():
+            return candidate
+    return data_dir / f"{stem}.tif"
 
 
 def _resolve_sources(
@@ -250,31 +306,80 @@ def _resolve_sources(
         )
     if data_format == "flat":
         return (
-            data_dir / f"{seq_id}_{img_name}.tif",
-            data_dir / f"{seq_id}_{segmentation_name}.tif",
+            _find_source(data_dir, f"{seq_id}_{img_name}"),
+            _find_source(data_dir, f"{seq_id}_{segmentation_name}"),
         )
     assert img_name
     return data_dir / seq_id / img_name, data_dir / seq_id / segmentation_name
 
 
-def _read_tifs(source: Path, lazy: bool) -> da.Array | np.ndarray | None:
-    """Read a .tif file or a directory of them as `(T, ...)`, or `None` if absent."""
+def _open(source: Path) -> BioImage:
+    """Open a file through BioIO, chunked so that one chunk is one frame."""
+    return BioImage(source, chunk_dims=["Y", "X"])
+
+
+def _frame_axes(image: BioImage) -> tuple[str, dict[str, int]]:
+    """The axis order to read `image` in, as `(order, axes to drop)`.
+
+    A TYX tif exported without axes metadata is read as ZYX by BioIO.
+    """
+    sizes = dict(zip(image.dims.order, image.shape, strict=True))
+    stacked = [a for a in image.dims.order if a not in "YX" and sizes[a] > 1] or ["T"]
+    dropped = {a: 0 for a in sizes if a not in "YX" and a not in stacked}
+    return "".join(stacked) + "YX", dropped
+
+
+def _read_file(source: Path) -> np.ndarray:
+    """Read every frame of one file into memory as `(T, ...)`."""
+    image = _open(source)
+    order, dropped = _frame_axes(image)
+    return image.get_image_data(order, **dropped)
+
+
+def _read_stack(source: Path, lazy: bool) -> da.Array | np.ndarray:
+    """Read one file as `(T, ...)`, reading frames on demand when `lazy`."""
+    if not lazy:
+        return _read_file(source)
+
+    image = _open(source)
+    order, dropped = _frame_axes(image)
+    frames = image.get_image_dask_data(order, **dropped)
+    if frames.shape[0] == 1:
+        # single-frame images don't need to be lazy-loaded. only here for compatibility
+        # and no relevance for tracking.
+        return _read_file(source)
+    # chunk by frame. not considering volumes
+    return frames.rechunk((1, *frames.shape[1:]))
+
+
+def _read_directory(paths: list[Path], lazy: bool) -> da.Array | np.ndarray:
+    """Read a directory's files as one `(T, ...)` sequence, in filename order."""
+    if not lazy:
+        return np.concatenate([_read_file(fp) for fp in paths])
+
+    # assume that everything has same shape, so that only first file has to be checked
+    probe = _read_file(paths[0])
+    return da.concatenate(
+        [
+            da.from_delayed(delayed(_read_file)(fp), shape=probe.shape, dtype=probe.dtype)
+            for fp in paths
+        ]
+    )
+
+
+def _read_frames(source: Path, lazy: bool) -> da.Array | np.ndarray | None:
+    """Read a file or a directory of them as `(T, ...)`, or `None` if absent.
+
+    Every frame in a directory is assumed to have the same shape and dtype.
+    """
     if not source.exists():
         return None
 
-    if source.is_dir():
-        target: Path | Sequence[Path] = sorted(source.glob("*.tif"))
-        if not target:
-            return None
-    else:
-        target = source
+    if not source.is_dir():
+        return _read_stack(source, lazy)
 
-    if lazy:
-        arr = da.from_zarr(imread(target, aszarr=True))
-    else:
-        arr = imread(target)
-
-    return arr[None] if arr.ndim < 3 else arr
+    paths = sorted(fp for fp in source.iterdir() if fp.suffix.lower() in IMAGE_SUFFIXES)
+    return _read_directory(paths, lazy) if paths else None
 
 
 # without percentiles
@@ -358,8 +463,8 @@ def load_images_and_masks(
     img_src, seg_src = _resolve_sources(
         data_dir, seq_id, data_format, img_name, segmentation_name
     )
-    images = _read_tifs(img_src, lazy)
-    masks = _read_tifs(seg_src, lazy)
+    images = _read_frames(img_src, lazy)
+    masks = _read_frames(seg_src, lazy)
 
     if images is None or len(images) == 0:
         images = None

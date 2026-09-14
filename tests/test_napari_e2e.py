@@ -9,7 +9,6 @@ Skipped unless napari is installed (`pixi run -e napari pytest tests/test_napari
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import hydra
@@ -71,11 +70,6 @@ def test_tracking_from_the_widget_adds_layers(
     widget._use_output.value = True
     widget._output_dir.value = tmp_path
     widget._device.value = "cpu"
-
-    # the widget itself never asks for dataloader workers, but this is the only test that
-    # pickles a real GraphDataset into worker processes, so it holds the spawn coverage
-    build = widget._build_params
-    monkeypatch.setattr(widget, "_build_params", lambda: replace(build(), num_workers=2))
 
     assert widget._run.enabled is True
 

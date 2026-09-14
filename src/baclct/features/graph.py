@@ -142,7 +142,7 @@ class EdgeFinder:
                 `custom_edge_features.py`.
             center_name: Type of center point to use, `centroid` (mean of coords) or
                 `center` (midpoint on medial axis).
-            n_jobs: Number of parallel threads (joblib) used during candidate edge
+            n_jobs: Number of worker processes (joblib) used during candidate edge
                 construction and pruning across frame pairs.
         """
         self.feature_names = feature_names
