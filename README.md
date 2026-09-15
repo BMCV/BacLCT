@@ -1,5 +1,8 @@
 # BacLCT: Bacteria Life Cycle Tracking
 
+[![PyPI](https://img.shields.io/pypi/v/baclct)](https://pypi.org/project/baclct/)
+[![Docs](https://readthedocs.org/projects/baclct/badge/?version=latest)](https://baclct.readthedocs.io/en/latest/)
+
 Code for the paper [*Bacteria Tracking and Life Cycle State Classification using Graph
 Neural Networks and Pretrained Vision
 Transformers*](https://doi.org/10.1016/j.media.2026.104275) (Medical Image Analysis,
@@ -20,9 +23,6 @@ BacLCT includes pre-trained models for tracking bacteria in bright field and pha
 contrast images, and for simultaneous tracking and life cycle state classification of *B.
 subtilis* spore germination and outgrowth in bright field images. It is also available as
 a napari plugin.
-
-**Documentation: <https://baclct.readthedocs.io>** — getting started, user guide, and API
-reference.
 
 ## Installation
 
