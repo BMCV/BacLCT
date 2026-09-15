@@ -27,6 +27,7 @@ from baclct.io import (
     export_classification_results,
     export_combined_tracks,
     export_tracking_results_simple,
+    resolve_export_suffix,
 )
 from baclct.models.lightning_model import TrackingModel
 from baclct.tracking.postprocessing import (
@@ -101,6 +102,9 @@ class BacLCT:
                 case `config_overrides` must supply `dataset` and `task`.
             config_overrides: Overrides applied on top of `config`, as a dotlist of
                 'key=value' strings, a dict, a `DictConfig`, or a path to a YAML file.
+                When `config` is `None`, only a dotlist is accepted: composing the
+                packaged config has to select the `dataset` and `task` config groups,
+                which the other three forms cannot express.
                 This is the single override channel for both training and tracking. Keys
                 tied to the trained model (architecture, feature extractors, fold) are
                 always restored from the original config, so a checkpoint cannot be
@@ -280,16 +284,13 @@ class BacLCT:
         exporters expect.
         """
         report(progress, "export", 0, 1, "Writing results")
+        suffix = resolve_export_suffix(export_suffix, export_format)
         if export_format == "flat":
             export_tracking_results_simple(
-                tracks,
-                tracker.tracked_masks(),
-                name,
-                output_dir,
-                suffix=export_suffix if export_suffix is not None else "_tracks",
+                tracks, tracker.tracked_masks(), name, output_dir, suffix=suffix
             )
         else:
-            target_dir = output_dir / f"{name}{export_suffix or ''}"
+            target_dir = output_dir / f"{name}{suffix}"
             tracker.export_results(raw_tracks, target_dir, format="ctc")
             if node_preds is not None:
                 export_classification_results(
@@ -391,9 +392,12 @@ class BacLCT:
             sequence_id: Name of the image sequence, used to key the feature cache and to
                 name the exported results.
             export_format: Format used for storing tracking outputs. 'ctc' writes a
-                per-sequence CTC directory. 'flat' writes '{sequence_id}_tracks.csv' and
-                '{sequence_id}_tracks.tif' directly into `output_dir`.
-            export_suffix: Appended to `sequence_id` during export.
+                per-sequence CTC directory. 'flat' writes a CSV and a TIF directly into
+                `output_dir`.
+            export_suffix: Appended to `sequence_id` during export, naming the results
+                '{sequence_id}{export_suffix}'. `None` takes the default of the format,
+                '_RES' ('ctc') or '_tracks' ('flat'); '' names them after `sequence_id`
+                alone.
             progress: Optional sink for progress events, called between frames, batches,
                 and timepoints. Raise `TrackingCancelled` from it to abort the run.
             spacing: Physical frame and voxel spacing, as a mapping over any subset of

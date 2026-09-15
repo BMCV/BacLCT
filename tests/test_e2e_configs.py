@@ -112,7 +112,7 @@ def test_config_variant_runs(
     patched = isinstance(pipeline_pred.dataset, GraphPatchDataset)
     assert patched == (patch_size is not None)
 
-    prediction_file = run_dir / "tracking_results" / "01" / "res_track.txt"
+    prediction_file = run_dir / "tracking_results" / "01_RES" / "res_track.txt"
     assert prediction_file.exists(), f"Prediction file not found at {prediction_file}"
 
 
@@ -185,7 +185,7 @@ def test_experiment_config_train_and_predict(
         export_format="ctc",
     )
 
-    prediction_file = run_dir / "tracking_results" / "01" / "res_track.txt"
+    prediction_file = run_dir / "tracking_results" / "01_RES" / "res_track.txt"
     assert prediction_file.exists(), (
         f"[{experiment}] Prediction file not found at {prediction_file}"
     )

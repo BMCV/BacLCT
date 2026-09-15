@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import os.path
 import re
 import warnings
 from collections.abc import Callable
@@ -20,7 +19,12 @@ from tqdm.auto import tqdm
 
 from baclct.api import BacLCT
 from baclct.features.graph import EdgePruneArg
-from baclct.io import get_sequences_from_path, load_images_and_masks
+from baclct.io import (
+    get_sequences_from_path,
+    load_images_and_masks,
+    resolve_export_suffix,
+    shared_prefix,
+)
 from baclct.io.load import DATA_FORMATS, _read_frames
 from baclct.utils.data import close_worker_pool, set_multiprocessing_context
 from baclct.utils.pretrained import DEFAULT_MODEL
@@ -181,7 +185,9 @@ ExportSuffixOpt = Annotated[
     str | None,
     typer.Option(
         "--export-suffix",
-        help="Appended to the sequence id during export.",
+        help="Appended to the sequence id, naming the results "
+        "'{id}{suffix}'. Defaults to '_RES' ('ctc') or '_tracks' ('flat'). Pass an "
+        "empty string to name them after the sequence id alone.",
         rich_help_panel=_EXPORT,
         show_default=False,
     ),
@@ -310,12 +316,6 @@ def _load_paths(
     return cast("_Frames | None", loaded_images), cast("_Frames", loaded_masks)
 
 
-def _shared_prefix(left: str, right: str) -> str | None:
-    """What two names start with, or `None` when that is too little to name a run by."""
-    shared = os.path.commonprefix([left, right]).rstrip("_-. ")
-    return shared if len(shared) > 1 else None
-
-
 def _sequence_id(images: Path, masks: Path) -> str | None:
     """The sequence both paths belong to, or `None` when they share nothing.
 
@@ -325,7 +325,7 @@ def _sequence_id(images: Path, masks: Path) -> str | None:
     """
     if images.parent == masks.parent:
         # 'flat': '01_images.tif' beside '01_masks.tif'
-        prefix = _shared_prefix(images.stem, masks.stem)
+        prefix = shared_prefix(images.stem, masks.stem)
         if prefix is not None:
             return prefix
         # 'dirs': '01/BF' beside '01/Segmentation', so the sequence is their parent
@@ -333,7 +333,7 @@ def _sequence_id(images: Path, masks: Path) -> str | None:
             return images.parent.name or None
         return None
     # 'ctc': '01' beside '01_GT/TRA'
-    return _shared_prefix(images.name, masks.parent.name)
+    return shared_prefix(images.name, masks.parent.name)
 
 
 def _describe(images: _Frames | None, masks: _Frames) -> str:
@@ -352,6 +352,21 @@ def _describe(images: _Frames | None, masks: _Frames) -> str:
     return f"{shown}, masks {masks.shape} {masks.dtype}{mismatch}"
 
 
+def _results_exist(
+    output_dir: Path, sequence_id: str, export_format: str, export_suffix: str | None
+) -> bool:
+    """Whether a previous run already wrote this sequence's results.
+
+    Both flat files have to be there: a run interrupted halfway through its export left
+    one of them behind, and that is worth redoing rather than skipping.
+    """
+    name = f"{sequence_id}{resolve_export_suffix(export_suffix, export_format)}"
+    if export_format == "ctc":
+        target = output_dir / name
+        return target.is_dir() and any(target.iterdir())
+    return all((output_dir / f"{name}{ext}").is_file() for ext in (".csv", ".tif"))
+
+
 def _track_sequence(
     pipeline: BacLCT,
     sequence_id: str,
@@ -366,10 +381,18 @@ def _track_sequence(
     Returns:
         Whether it succeeded, and a message to print if there is one.
     """
-    if not dry_run and track_kwargs["export_format"] == "ctc":
-        existing = output_dir / f"{sequence_id}{track_kwargs['export_suffix'] or ''}"
-        if not overwrite and existing.is_dir() and any(existing.iterdir()):
-            return True, "output already exists, skipping"
+    already_there = (
+        not dry_run
+        and not overwrite
+        and _results_exist(
+            output_dir,
+            sequence_id,
+            track_kwargs["export_format"],
+            track_kwargs["export_suffix"],
+        )
+    )
+    if already_there:
+        return True, "output already exists, skipping"
 
     try:
         loaded_images, loaded_masks = load(sequence_id)
@@ -736,8 +759,9 @@ def napari_main(
 
     Takes the same IMAGES and MASKS as `track`, loads them lazily so a long movie opens
     at once, docks the tracking widget, and fills it in from whichever flags were
-    passed. A flag left out keeps the widget's own default, so the thresholds still
-    follow the model unless --thr-corr or --thr-div says otherwise. Press 'Start
+    passed. A flag left out keeps the widget's own setting: the search radius and the
+    pruning are filled in from the model, while the thresholds and segmentation
+    correction are not, unless --thr-corr or --thr-div says otherwise. Press 'Start
     tracking' in the widget to run the same pipeline `track` runs.
     """
     if not NAPARI_AVAILABLE:

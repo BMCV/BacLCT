@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .export import (
+    DEFAULT_EXPORT_SUFFIX,
     clean_tracks_df,
     coordinate_columns,
     create_track_df,
@@ -13,6 +14,8 @@ from .export import (
     export_tracking_results_flat,
     export_tracking_results_simple,
     node_preds_to_df,
+    resolve_export_suffix,
+    shared_prefix,
 )
 from .lineage import find_lineage_file, load_lineage, tracks_to_lbep
 from .load import (
@@ -28,6 +31,7 @@ from .load import (
 )
 
 __all__ = [
+    "DEFAULT_EXPORT_SUFFIX",
     "cached_percentiles",
     "clean_tracks_df",
     "coordinate_columns",
@@ -48,6 +52,8 @@ __all__ = [
     "load_images_and_masks",
     "load_lineage",
     "node_preds_to_df",
+    "resolve_export_suffix",
     "scale_percentiles",
+    "shared_prefix",
     "tracks_to_lbep",
 ]

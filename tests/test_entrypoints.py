@@ -245,15 +245,41 @@ def test_track_main_hands_the_pipeline_what_lazy_asked_for(track_cli, tmp_path, 
 
 
 @pytest.mark.parametrize("overwrite", [False, True])
-def test_track_main_skips_existing_results(track_cli, tmp_path, overwrite):
-    """A non-empty result directory is skipped unless `--overwrite` is given."""
-    done = tmp_path / "out" / "01"
-    done.mkdir(parents=True)
-    (done / "res_track.txt").touch()
+@pytest.mark.parametrize(
+    ("args", "existing"),
+    [
+        ((), ("01_RES/res_track.txt",)),
+        (("--export-format", "flat"), ("01_tracks.csv", "01_tracks.tif")),
+        (("--export-suffix", "_mine"), ("01_mine/res_track.txt",)),
+    ],
+    ids=["ctc", "flat", "suffix"],
+)
+def test_track_main_skips_existing_results(
+    track_cli, tmp_path, args, existing, overwrite
+):
+    """Results already on disk are skipped unless `--overwrite` is given.
 
-    track, result = track_cli(*(["--overwrite"] if overwrite else []))
+    Both formats count, under whichever suffix the run would write: 'ctc' as a non-empty
+    result directory, 'flat' as the CSV/TIF pair.
+    """
+    for relative in existing:
+        path = tmp_path / "out" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+    track, result = track_cli(*args, *(["--overwrite"] if overwrite else []))
     assert result.exit_code == 0, result.output
     assert _tracked(track) == (["01", "02"] if overwrite else ["02"])
+
+
+def test_track_main_redoes_a_half_written_flat_export(track_cli, tmp_path):
+    """One file of the flat pair is an interrupted export, so it is not skipped."""
+    (tmp_path / "out").mkdir(parents=True)
+    (tmp_path / "out" / "01_tracks.csv").touch()
+
+    track, result = track_cli("--export-format", "flat")
+    assert result.exit_code == 0, result.output
+    assert _tracked(track) == ["01", "02"]
 
 
 def test_track_main_dry_run_reports_the_inputs_without_tracking(track_cli, ctc_data_dir):

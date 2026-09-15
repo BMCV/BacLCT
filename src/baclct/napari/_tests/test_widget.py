@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from baclct.io import DEFAULT_EXPORT_SUFFIX
 from baclct.napari._widget import (
     PRETRAINED_MODELS,
     RADIUS_LAYER_NAME,
@@ -257,6 +258,22 @@ def test_controls_are_collected_into_track_params(widget):
     assert params.patch_size == 128
     # the cache key is the layer name, which also names the export
     assert params.sequence_id == widget._output_name()
+
+
+def test_export_suffix_follows_the_format_and_survives_being_cleared(widget):
+    """The suffix defaults per format, and an emptied field means no suffix at all.
+
+    '' has to reach `track()` as '', not as `None`: `None` is what asks for the format
+    default back.
+    """
+    assert widget._export_format.value == "flat"
+    assert widget._build_params().export_suffix == DEFAULT_EXPORT_SUFFIX["flat"]
+
+    widget._export_format.value = "ctc"
+    assert widget._build_params().export_suffix == DEFAULT_EXPORT_SUFFIX["ctc"]
+
+    widget._export_suffix.value = ""
+    assert widget._build_params().export_suffix == ""
 
 
 def test_a_second_run_reuses_the_cache_and_replaces_the_layers(

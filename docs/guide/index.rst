@@ -1,13 +1,14 @@
 User guide
 ==========
 
-:doc:`inference` covers running a pre-trained model on your own sequences, from Python or
-the command line. :doc:`napari` does the same interactively in the viewer.
-:doc:`training` covers training a model on your own data.
+:doc:`inference` provides an example for running tracking using a pre-trained model from
+Python, :doc:`cli` for the command line, and :doc:`napari` provides an overview for the
+napari plugin. :doc:`training` covers training a model from scratch.
 
 .. toctree::
    :maxdepth: 2
 
    inference
+   cli
    napari
    training

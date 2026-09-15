@@ -9,11 +9,11 @@ defaults:
 
   - tracker: lap
 
-  - dataset: ???
-  - task: ??? # overrides dataset params
-
   - paths: _base
   - hydra: _base
+
+  - dataset: ??? # may override paths
+  - task: ??? # overrides dataset params
 
   - _self_
 

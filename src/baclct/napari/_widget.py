@@ -30,6 +30,7 @@ from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QSizePolicy
 from superqt import QCollapsible
 
+from baclct.io import DEFAULT_EXPORT_SUFFIX, shared_prefix
 from baclct.napari._layers import add_result_layers
 from baclct.napari._radius import radius_preview_shapes, resolve_radius_px
 from baclct.napari._worker import CancelToken, TrackParams, TrackResult, tracking_worker
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
 
 RADIUS_LAYER_NAME = "BacLCT search radius"
 DEFAULT_RADIUS = "2.5x"
-DEFAULT_SUFFIX = {"flat": "_tracks", "ctc": "_RES"}
 # sentinel for radius text that is neither a number nor an 'Nx' spec
 INVALID_RADIUS = object()
 
@@ -154,7 +154,11 @@ _HELP_TEXTS = {
         "Layout of the results: 'ctc' for a sequence directory, 'flat' for "
         "'{id}_tracks.csv' plus '{id}_tracks.tif'."
     ),
-    "export_suffix": "Appended to the sequence id during export.",
+    "export_suffix": (
+        "Appended to the sequence id (what the image and segmentation layer names agree "
+        "on) during export, naming the results '{id}{suffix}'. Empty names them after "
+        "the id alone."
+    ),
 }
 HELP = {key: textwrap.fill(text, TOOLTIP_WIDTH) for key, text in _HELP_TEXTS.items()}
 
@@ -339,7 +343,7 @@ class BacLCTWidget(Container):
         )
         self._export_suffix = LineEdit(
             label="Suffix",
-            value=DEFAULT_SUFFIX["flat"],
+            value=DEFAULT_EXPORT_SUFFIX["flat"],
             visible=False,
             tooltip=HELP["export_suffix"],
         )
@@ -714,16 +718,27 @@ class BacLCTWidget(Container):
         return image
 
     def _output_name(self) -> str:
-        """Layer name, used both for on-disk export naming and as the cache key.
+        """Sequence id, used both for on-disk export naming and as the cache key.
+
+        Follows the same rule as the CLI: the id is what the two inputs agree on, so
+        '01 images' beside '01 masks' exports '01', matching `baclct-track` on the paths
+        those layers were opened from. Layers that share nothing fall back to the
+        segmentation's own name, so renaming it still renames the export.
 
         The feature cache itself now guards against reusing another movie's features
         (its sidecar records a content hash of the images/masks it was built from), so
         the widget no longer needs to bake one into the cache key.
         """
-        return _slug(self._labels_layer.value.name)
+        masks_name = self._labels_layer.value.name
+        image_layer = self._image_layer.value
+        if image_layer is not None:
+            shared = shared_prefix(image_layer.name, masks_name)
+            if shared is not None:
+                return _slug(shared)
+        return _slug(masks_name)
 
     def _on_export_format_changed(self) -> None:
-        self._export_suffix.value = DEFAULT_SUFFIX[self._export_format.value]
+        self._export_suffix.value = DEFAULT_EXPORT_SUFFIX[self._export_format.value]
 
     def _build_params(self) -> TrackParams:
         masks = self._labels_layer.value.data
@@ -735,7 +750,7 @@ class BacLCTWidget(Container):
             masks=masks,
             model=self._model_arg(),
             sequence_id=output_name,
-            export_suffix=self._export_suffix.value or None,
+            export_suffix=self._export_suffix.value,
             graph_search_radius=self._search_radius(),
             prune_edges_by=self._prune_edges_by(),
             thr_corr=self._thr_corr.value,

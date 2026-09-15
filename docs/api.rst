@@ -29,7 +29,7 @@ which reconstructs trajectories and applies segmentation error correction.
    baclct.models
    baclct.tracking
    baclct.io
-   baclct.track
+   baclct.cli
    baclct.train
    baclct.napari
    baclct.utils

@@ -2,8 +2,8 @@ cff-version: 1.2.0
 title: "BacLCT: Bacteria Life Cycle Tracking"
 message: "If you use this software, please cite the paper below."
 type: software
-version: 0.4.0
-date-released: "2026-08-26"
+version: 0.4.1
+date-released: "2026-09-10"
 authors:
   - given-names: Moritz
     family-names: Kunzmann
