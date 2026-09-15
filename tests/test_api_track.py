@@ -262,7 +262,7 @@ def test_track_states_follow_the_trained_model(
 
     assert "state" in tracks.columns
     assert pipeline.node_preds is not None
-    assert (tmp_path / "01" / "res_states.csv").exists()
+    assert (tmp_path / "01_RES" / "res_states.csv").exists()
 
 
 @xfail_on_mps
@@ -279,7 +279,7 @@ def test_track_states_absent_for_a_tracking_only_model(
 
     assert "state" not in tracks.columns
     assert pipeline.node_preds is None
-    assert not (tmp_path / "01" / "res_states.csv").exists()
+    assert not (tmp_path / "01_RES" / "res_states.csv").exists()
 
 
 @pytest.mark.parametrize(
