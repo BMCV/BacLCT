@@ -27,6 +27,7 @@ from baclct.io import (
     export_classification_results,
     export_combined_tracks,
     export_tracking_results_simple,
+    resolve_export_suffix,
 )
 from baclct.models.lightning_model import TrackingModel
 from baclct.tracking.postprocessing import (
@@ -42,6 +43,7 @@ from baclct.utils.config import (
     resolve_data_config,
 )
 from baclct.utils.data import (
+    close_worker_pool,
     get_device,
     get_multiprocessing_context,
     resolve_accelerator,
@@ -100,6 +102,9 @@ class BacLCT:
                 case `config_overrides` must supply `dataset` and `task`.
             config_overrides: Overrides applied on top of `config`, as a dotlist of
                 'key=value' strings, a dict, a `DictConfig`, or a path to a YAML file.
+                When `config` is `None`, only a dotlist is accepted: composing the
+                packaged config has to select the `dataset` and `task` config groups,
+                which the other three forms cannot express.
                 This is the single override channel for both training and tracking. Keys
                 tied to the trained model (architecture, feature extractors, fold) are
                 always restored from the original config, so a checkpoint cannot be
@@ -111,6 +116,7 @@ class BacLCT:
         self._cfg: DictConfig | None = None
         self.dataset: GraphDataset | TrackingDataset | None = None
         self.model: TrackingModel | None = None
+        self.tracker: BaseTracker | None = None
         self.edge_preds: pl.DataFrame | None = None
         self.node_preds: pl.DataFrame | None = None
 
@@ -121,12 +127,17 @@ class BacLCT:
             self._cfg = self._resolve_config(self._config)
         return self._cfg
 
-    def _resolve_config(self, config: DictConfig | str | Path | None) -> DictConfig:
+    def _resolve_config(
+        self,
+        config: DictConfig | str | Path | None,
+        runtime_overrides: dict[str, Any] | None = None,
+    ) -> DictConfig:
         """Resolve a config source, recording the experiment directory it came from.
 
         A model name or directory is a trained run, so the packaged inference defaults
         are applied to it. A `DictConfig` comes from a Hydra training job and is left as
-        composed.
+        composed. `runtime_overrides` holds the throughput arguments of `track()`, applied
+        above `config_overrides`.
         """
         if config is None:
             overrides = self._config_overrides
@@ -140,11 +151,16 @@ class BacLCT:
             return compose_package_config(dotlist)
 
         if isinstance(config, DictConfig):
-            return resolve_and_merge_configs(config, self._config_overrides)
+            return resolve_and_merge_configs(
+                config, self._config_overrides, runtime_overrides=runtime_overrides
+            )
 
         self._experiment_dir = BacLCT._resolve_model_dir(config)
         return resolve_and_merge_configs(
-            self._experiment_dir, self._config_overrides, inference=True
+            self._experiment_dir,
+            self._config_overrides,
+            inference=True,
+            runtime_overrides=runtime_overrides,
         )
 
     def _instantiate_dataset(
@@ -200,18 +216,6 @@ class BacLCT:
 
         return getattr(trainer.checkpoint_callback, "best_model_path", None), metrics
 
-    def _resolve_classify_states(self, classify_states: bool | None) -> bool:
-        """Decide whether states are predicted, given model support and user request."""
-        supports_states = bool(self.cfg.get("num_node_classes"))
-        if classify_states and not supports_states:
-            logger.warning(
-                "Model was not trained for node classification. Ignoring "
-                "`classify_states` and predicting tracks only."
-            )
-        if classify_states is None:
-            return supports_states
-        return classify_states and supports_states
-
     def _track_and_export(
         self,
         dataset: GraphDataset,
@@ -221,16 +225,22 @@ class BacLCT:
         sequence_id: str,
         export_format: Literal["ctc", "flat"],
         export_suffix: str | None,
+        tracker_overrides: dict[str, Any],
         progress: ProgressCallback | None,
     ) -> tuple[pl.DataFrame, pl.DataFrame | None, BaseTracker]:
         """Reconstruct trajectories, clean them, and export in the requested format."""
         tracker_cfg = self.cfg.get("tracker")
         if tracker_cfg is not None:
             tracker: BaseTracker = instantiate(
-                tracker_cfg, dataset=dataset, predictions=edge_preds
+                tracker_cfg,
+                dataset=dataset,
+                predictions=edge_preds,
+                **tracker_overrides,
             )
         else:
-            tracker = LAPTracker(dataset=dataset, predictions=edge_preds)
+            tracker = LAPTracker(
+                dataset=dataset, predictions=edge_preds, **tracker_overrides
+            )
         tracker.progress = progress
 
         raw_tracks = tracker.track()
@@ -274,16 +284,13 @@ class BacLCT:
         exporters expect.
         """
         report(progress, "export", 0, 1, "Writing results")
+        suffix = resolve_export_suffix(export_suffix, export_format)
         if export_format == "flat":
             export_tracking_results_simple(
-                tracks,
-                tracker.tracked_masks(),
-                name,
-                output_dir,
-                suffix=export_suffix if export_suffix is not None else "_tracks",
+                tracks, tracker.tracked_masks(), name, output_dir, suffix=suffix
             )
         else:
-            target_dir = output_dir / f"{name}{export_suffix or ''}"
+            target_dir = output_dir / f"{name}{suffix}"
             tracker.export_results(raw_tracks, target_dir, format="ctc")
             if node_preds is not None:
                 export_classification_results(
@@ -297,41 +304,51 @@ class BacLCT:
         images: da.Array | np.ndarray,
         masks: da.Array | np.ndarray,
         model: str | Path | None = None,
-        classify_states: bool | None = None,
+        # graph
         graph_search_radius: int | str | None = "2.5x",
         prune_edges_by: str | tuple[str, int | float | str] | None = None,
-        patch_size: int | tuple[int, ...] | None = None,
+        # tracker
+        thr_corr: float | None = None,
+        thr_div: float | None = None,
+        segmentation_correction: bool | None = None,
+        # throughput
         device: str | None = None,
+        cache_dir: Path | str | Literal["temp"] | None = "temp",
+        patch_size: int | tuple[int, ...] | None = None,
+        batch_size: int = 1,
+        num_workers: int = 0,
+        # export
         output_dir: Path | str | None = None,
         sequence_id: str = "pred",
         export_format: Literal["ctc", "flat"] = "ctc",
         export_suffix: str | None = None,
-        cache_dir: Path | str | Literal["temp"] | None = None,
+        # advanced
         progress: ProgressCallback | None = None,
         spacing: SpacingLike = None,
+        # internal: `cli.py`'s chained `track` command sets this `False` to reuse the
+        # feature-extraction worker pool across sequences instead of closing it after
+        # every call. library callers have no use for it, so it is undocumented here.
+        _close_pool_after: bool = True,
     ) -> tuple[np.ndarray, pl.DataFrame]:
         """Run tracking on a single sequence.
 
-        Loads a trained model and applies it to images and segmentation masks, running
-        feature extraction, GNN inference, and tracking. Unless `cache_dir` is given,
-        features are not cached and nothing is written apart from the outputs.
+        Runs feature extraction, GNN inference, and tracking with a pre-trained model.
+        Architecture- and data-specific defaults are read from that model, and every
+        parameter required for inference is an argument here: `config_overrides` stays the
+        escape hatch for the rest of the config tree.
 
-        Throughput and the tracker are not arguments here but config keys, reachable
-        through `config_overrides` at construction: `num_jobs_features`,
-        `num_workers_encode`, `num_workers_predict`, `batch_size`, and `tracker.thr_corr`,
-        `tracker.thr_div`, `tracker.segmentation_correction`.
+        Life cycle state classification follows the pre-trained model: states are
+        predicted whenever the checkpoint was trained with `num_node_classes`.
 
         Args:
             images: Image sequence with shape `(T, H, W)`.
-            masks: Instance-segmentation masks for `images`.
-            model: Registered model name (e.g. 'baclct_track'), or path to an
-                experiment directory. Falls back to the model given at construction, and
-                to 'baclct_track' when neither names one.
-            classify_states: Whether to predict life cycle states. `None` follows the
-                model, which classifies states when it was trained with
-                `num_node_classes`. `False` suppresses them even for a model that can,
-                leaving no 'state' column, no node predictions, and no state export.
-                `True` on a model that was not trained for it warns and is ignored.
+            masks: Instance-segmentation masks for `images`, one label per object.
+                A boolean stack is rejected and a binary one tracks as a single
+                object per frame, so relabel it first, e.g. with
+                `skimage.measure.label`.
+            model: Registered model name (e.g. 'baclct_track'), or path to an experiment
+                directory. `None` uses the config this pipeline was constructed with, and
+                falls back to 'baclct_track' when it was constructed without one.
             graph_search_radius: Maximum distance for an edge between two cells, as
                 pixels or as a multiple of the expected cell size (e.g. `'2.5x'`, resolved
                 against the median major axis length in the first frame). Relative by
@@ -343,45 +360,73 @@ class BacLCT:
                 the model was trained with, 'off' prunes nothing and leaves the search
                 radius as the only limit. Deviating from the trained value moves the
                 candidate edges away from the distribution the model saw during training.
+            thr_corr: Minimum predicted probability for a correspondence edge to be
+                considered. `None` keeps the tracker's trained default.
+            thr_div: Minimum predicted probability for a division edge to be considered.
+                Lower it to recover missed divisions, raise it against spurious ones.
+                `None` keeps the tracker's trained default.
+            segmentation_correction: Whether over- and undersegmentation are corrected
+                from the division and correspondence predictions. `None` follows the model
+                configuration, `False` switches correction off. Developed for rod-shaped
+                bacteria, so switch it off for round cells or very dense regions.
+            device: Where the encoder and the GNN run, e.g. 'cpu', 'cuda', 'cuda:1',
+                'mps'. `None` picks cuda, then mps, then cpu.
+            cache_dir: Where node, deep, and edge features are cached. `'temp'` (the
+                default) uses a temporary directory removed together with this pipeline
+                and scans the edges lazily from it, a path caches persistently for
+                repeated runs over the same sequence, and `None` writes nothing and keeps
+                the precomputed edges in memory. A persistent cache is keyed by
+                `sequence_id`, so pass a distinct one per sequence.
             patch_size: Tile each frame into spatial patches of this size instead of
                 building one whole-frame graph. Needed for large images where the
                 full-frame graph exceeds memory.
-            device: Where the encoder and the GNN run, e.g. 'cpu', 'cuda', 'cuda:1',
-                'mps'. `None` picks cuda, then mps, then cpu.
+            batch_size: Subgraphs per prediction batch.
+            num_workers: Worker processes for feature extraction. Frames are handled
+                `num_workers` at a time, while a stage that did not benefit from more is
+                pinned at its own measured optimum instead (2 for the encoder's patch
+                cropping, whatever this is set to). `0` (the default) runs serially, `-1`
+                takes every core, unbounded. Worth raising on long or dense sequences
+                only.
             output_dir: Directory where tracking outputs are stored. `None` exports
                 nothing and returns the results only.
             sequence_id: Name of the image sequence, used to key the feature cache and to
                 name the exported results.
             export_format: Format used for storing tracking outputs. 'ctc' writes a
-                per-sequence CTC directory. 'flat' writes '{sequence_id}_tracks.csv' and
-                '{sequence_id}_tracks.tif' directly into `output_dir`.
-            export_suffix: Appended to `sequence_id` during export.
-            cache_dir: Where node, deep, and edge features are cached. `None` writes
-                nothing and keeps the precomputed edges in memory, `'temp'` uses a
-                temporary directory removed with the returned tracker and scans the edges
-                lazily instead, and a path caches persistently for repeated runs over the
-                same sequence. A persistent cache is keyed by `sequence_id`, so pass a
-                distinct one per sequence.
+                per-sequence CTC directory. 'flat' writes a CSV and a TIF directly into
+                `output_dir`.
+            export_suffix: Appended to `sequence_id` during export, naming the results
+                '{sequence_id}{export_suffix}'. `None` takes the default of the format,
+                '_RES' ('ctc') or '_tracks' ('flat'); '' names them after `sequence_id`
+                alone.
             progress: Optional sink for progress events, called between frames, batches,
                 and timepoints. Raise `TrackingCancelled` from it to abort the run.
-            spacing: Physical frame and voxel spacing as a `{t, z, y, x}` mapping or a
-                length-2/3/4 sequence. `t` rescales the temporal edge distance to match
-                the frame rate the model trained on. When `masks` are every k-th frame of
-                a denser acquisition, pass `spacing.t=k` to recover the training
-                distribution. Unspecified axes default to `1.0`.
+            spacing: Physical frame and voxel spacing, as a mapping over any subset of
+                `t, z, y, x` (e.g. `{'t': 5}`) or as a full length-4 `(t, z, y, x)`
+                sequence. Unspecified axes default to `1.0`. `t` rescales the temporal
+                edge distance to match the frame rate the model trained on: when `masks`
+                are every k-th frame of a denser acquisition, pass `{'t': k}` to recover
+                the training distribution.
 
         Returns:
-            Tracked masks (matching `masks`'s shape) and the cleaned tracks frame
-            (`label`, `t`, `parent`, the single-cell features, and `state` when states
-            are classified). Raw edge and node predictions are reachable afterward via
-            `self.edge_preds`/`self.node_preds`, and the dataset and model via
-            `self.dataset`/`self.model`. On-disk export still follows `export_format`.
+            Tracked masks (matching `masks`'s shape) and the cleaned tracks frame, one
+            row per cell and frame (`label`, `t`, the center coordinate, `parent`, the
+            remaining single-cell features, and `state` when the model classifies states).
+            Raw edge and node predictions are reachable afterward via
+            `self.edge_preds`/`self.node_preds`, and the dataset, model, and tracker via
+            `self.dataset`/`self.model`/`self.tracker`. On-disk export still follows
+            `export_format`.
         """
+        # the throughput arguments are the top override layer, above `config_overrides`
+        runtime_overrides = {
+            "data": {"batch_size": batch_size},
+            **_worker_plan(num_workers),
+        }
         # load config the model was trained on, then merge overrides on top
         if model is None and self._config is None:
             model = DEFAULT_MODEL
-        if model is not None:
-            self._cfg = self._resolve_config(model)
+        self._cfg = self._resolve_config(
+            model if model is not None else self._config, runtime_overrides
+        )
         cfg = self.cfg
         if self._experiment_dir is None:
             raise ValueError(
@@ -395,22 +440,31 @@ class BacLCT:
         ckpt_path = resolve_checkpoint(
             cfg.get("checkpoint") or "best", self._experiment_dir
         )
-        classify_states = self._resolve_classify_states(classify_states)
+        # states follow the model, so there is nothing to ask for
+        classify_states = bool(cfg.get("num_node_classes"))
         # the argument is the channel, a config override only fills in for an unset one
         device = device if device is not None else cfg.get("device")
 
-        dataset = self._build_dataset(
-            images,
-            masks,
-            graph_search_radius=graph_search_radius,
-            prune_edges_by=prune_edges_by,
-            patch_size=patch_size,
-            device=device,
-            sequence_id=sequence_id,
-            cache_dir=cache_dir,
-            spacing=spacing,
-            progress=progress,
-        )
+        try:
+            dataset = self._build_dataset(
+                images,
+                masks,
+                graph_search_radius=graph_search_radius,
+                prune_edges_by=prune_edges_by,
+                patch_size=patch_size,
+                device=device,
+                sequence_id=sequence_id,
+                cache_dir=cache_dir,
+                spacing=spacing,
+                progress=progress,
+            )
+        finally:
+            # keeping worker pool open costs several GB and timeout is by default set to
+            # 10min. `_close_pool_after` is by default enabled for single-sequence
+            # tracking and set off for multi-sequence tracking or during training.
+            # reopening a pool costs a few seconds.
+            if _close_pool_after:
+                close_worker_pool()
         edge_preds, node_preds = self._predict(dataset, ckpt_path, device, progress)
 
         tracks, node_preds_df, tracker = self._track_and_export(
@@ -421,9 +475,13 @@ class BacLCT:
             sequence_id=sequence_id,
             export_format=export_format,
             export_suffix=export_suffix,
+            tracker_overrides=_tracker_overrides(
+                thr_corr, thr_div, segmentation_correction
+            ),
             progress=progress,
         )
-        # keep the raw predictions reachable without widening the return tuple
+        # keep the tracker and the raw predictions reachable without widening the tuple
+        self.tracker = tracker
         self.edge_preds = tracker.predictions
         self.node_preds = node_preds_df
         return tracker.tracked_masks(), tracks
@@ -487,12 +545,9 @@ class BacLCT:
             graph_fov_size=cfg.data.get("graph_fov_size", None),
             patch_size=patch_size,
             spacing=spacing,
-            # not configurable at inference: the training cap samples edges at random
-            # once exceeded, the per-window rebuild is far slower, and a stale cache is
-            # never worth the hash it saves
             precompute_edges=True,
             graph_max_num_edges=-1,
-            patch_overlap=0.0,
+            patch_overlap=0.05,
             trust_cache=False,
         )
         _warn_on_edge_memory(self.dataset, cache_dir, cfg.data.num_workers)
@@ -543,6 +598,43 @@ class BacLCT:
         )
         trainer.predict(self.model, dataloaders=dataloader, return_predictions=False)
         return collector.collect()
+
+
+def _worker_plan(num_workers: int) -> dict[str, Any]:
+    """Derive every worker pool size from the single `num_workers` knob.
+
+    Graph construction and GNN inference are slower at every measured value, so both
+    stay serial here and keep their `_INFERENCE_DEFAULTS` entries, which
+    `config_overrides` still reaches for the cases where their workers do help.
+
+    `-1` (joblib's "every core") is passed straight through to node extraction
+    unbounded: no measured peak justifies capping it, so sizing the pool is left to
+    the caller instead of to a hidden default here. `0` still maps to `1`, since a
+    literal `n_jobs=0` is invalid in joblib. The DINO encoder keeps its own pin at 2
+    workers, a measured sharp optimum unrelated to core count.
+    """
+    return {
+        "features": {
+            "handcrafted": {"n_jobs": num_workers if num_workers != 0 else 1},
+            "deep": {"num_workers": 0 if num_workers == 0 else 2},
+        },
+    }
+
+
+def _tracker_overrides(
+    thr_corr: float | None,
+    thr_div: float | None,
+    segmentation_correction: bool | None,
+) -> dict[str, Any]:
+    """Collect the tracker arguments that were set, leaving the rest at trained values."""
+    overrides: dict[str, Any] = {}
+    if thr_corr is not None:
+        overrides["thr_corr"] = thr_corr
+    if thr_div is not None:
+        overrides["thr_div"] = thr_div
+    if segmentation_correction is False:
+        overrides["segmentation_correction"] = None
+    return overrides
 
 
 def _feature_dir_arg(cache_dir: Path | str | None) -> Path | Literal["temp"] | None:

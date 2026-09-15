@@ -32,6 +32,8 @@ data:
   lazy: true
 
 features:
+  handcrafted:
+    n_jobs: 8
   edges:
     # colony growth displaces cells outwards (also along the short axis),
     # pruning emphasizes movement along the long axis and would discard those edges

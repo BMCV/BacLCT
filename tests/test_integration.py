@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import cast
 
+import dask.array as da
 import hydra
 import lightning as L
 import numpy as np
@@ -566,9 +567,45 @@ def test_pipeline_handcrafted_features_images_optional(
     assert dataset.images is (toy_images if with_images else None)
     assert dataset.node_feats.height > 0
     assert "axis_minor_length" in dataset.node_feats.columns
-    # percentiles are the one thing that needs intensities
-    assert (dataset.image_percentiles is not None) == with_images
+    # percentiles are only computed for normalization, so neither intensity props (not
+    # requested here) nor a deep extractor means no pass over the images
+    assert dataset.image_percentiles is None
 
     item = dataset[0]
-    assert item.num_nodes > 0  # type: ignore
+    assert item.num_nodes > 0
     assert item.num_edges > 0
+
+
+def test_pipeline_matches_between_lazy_and_eager_inputs(toy_data_dir, basic_extractors):
+    """A dask sequence assembles the same graph as the materialized one.
+
+    The napari plugin hands `track()` whatever its layers hold, which is a frame-chunked
+    dask array whenever the sequence was opened lazily. Nothing downstream may depend on
+    the stack being resident.
+    """
+    from baclct.io.load import _read_frames
+
+    results = []
+    for lazy in (False, True):
+        edge_finder, hc_extractor = basic_extractors
+        images = _read_frames(toy_data_dir / "sample_images.tif", lazy=lazy)
+        masks = _read_frames(toy_data_dir / "sample_masks.tif", lazy=lazy)
+        assert isinstance(images, da.Array) is lazy
+        if lazy:
+            # one chunk per frame is what lets the encoder use workers at all
+            assert images.chunks[0] == (1,) * len(images)
+
+        dataset = GraphDataset(
+            data_dir=None,
+            feature_dir=None,
+            sequence_id="test",
+            edge_finder=edge_finder,
+            handcrafted_feature_extractor=hc_extractor,
+            deep_feature_extractor=None,
+            images=images,
+            masks=masks,
+        )
+        item = dataset[0]
+        results.append((dataset.node_feats.height, item.num_nodes, item.num_edges))
+
+    assert results[0] == results[1]

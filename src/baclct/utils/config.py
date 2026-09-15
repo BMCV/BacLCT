@@ -19,23 +19,16 @@ from baclct.utils.logger import get_pylogger
 
 logger = get_pylogger(__name__)
 
-# packaged configs, resolved relative to this file (src/baclct/utils -> src/baclct/config)
-CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
-INFERENCE_CONFIG = CONFIG_DIR / "inference.yaml"
-
 # tells "the config has no such key" apart from "the config sets it to None"
 _ABSENT = object()
 
-# The flat inference surface: one name per runtime parameter, and the path it drives.
-# Users override these by name and never have to know the config tree
-# (`config_overrides={'num_jobs_features': 4}`). Extend by adding a row here and a default
-# with its rationale to `config/inference.yaml`; nested overrides keep working alongside.
-RUNTIME_KEYS: dict[str, str] = {
-    "num_workers_predict": "data.num_workers",
-    "num_workers_encode": "features.deep.num_workers",
-    "num_jobs_features": "features.handcrafted.n_jobs",
-    "num_jobs_edges": "features.edges.n_jobs",
-    "batch_size": "data.batch_size",
+_INFERENCE_DEFAULTS: dict = {
+    # during prediction, fetching cached edges is cheaper than starting a worker. during
+    # training, workers are required, so this has to be overridden.
+    "data": {"num_workers": 0},
+    # using multiple workers for edge finding is never worth it with current features. in
+    # the past, this was required, so keeping it and silently overriding.
+    "features": {"edges": {"n_jobs": 1}},
 }
 
 # keys from the experiment config that config_overrides must not override
@@ -68,34 +61,40 @@ _RUNTIME_OVERRIDABLE_KEYS = frozenset(
     {
         "batch_size",  # patches per encoder forward
         "num_workers",  # dataloader workers cropping patches
-        "cells_per_item",  # cells per worker item
-        "prefetch_factor",  # items queued per worker
-        "n_jobs",  # joblib threads (handcrafted regionprops)
+        "n_jobs",  # joblib processes (handcrafted regionprops)
         "verbose",  # show progress bars
         "device",  # encoder placement
     }
 )
 
 
-def _expand_runtime_keys(layer: DictConfig, train_cfg: DictConfig) -> DictConfig:
-    """Layer with every flat runtime key rewritten onto the path it drives.
+def _drop_absent_branches(layer: DictConfig, train_cfg: DictConfig) -> DictConfig:
+    """Layer without sub-configs defaulting to `None`.
 
-    A key whose component the model does not have is dropped rather than created:
-    `num_workers_encode` on a model trained without deep features would otherwise merge
-    onto `features.deep: null` and revive it as a config nothing can be built from.
+    `features.deep` is null for a model trained without deep features. Merging
+    `num_workers` onto it would revive it as a config nothing can be built from. Only
+    whole sub-configs are dropped, so a scalar override still sets a null leaf such as
+    `device`.
     """
-    expanded = layer.copy()
-    OmegaConf.set_struct(expanded, False)
-    for key, path in RUNTIME_KEYS.items():
-        if key not in expanded:
+    # unresolved, so an interpolation in the layer stays one
+    raw = OmegaConf.to_container(layer, resolve=False)
+    assert isinstance(raw, dict)
+    return OmegaConf.create(_prune_absent(raw, train_cfg))
+
+
+def _prune_absent(layer: dict, train_cfg: DictConfig, prefix: str = "") -> dict:
+    """Recursive half of `_drop_absent_branches`, over plain containers."""
+    kept = {}
+    for key, value in layer.items():
+        if not isinstance(value, dict):
+            kept[key] = value
             continue
-        value = expanded.pop(key)
-        parent = path.rpartition(".")[0]
-        if parent and OmegaConf.select(train_cfg, parent, default=_ABSENT) is None:
-            logger.debug(f"Model has no '{parent}', ignoring '{key}'")
+        path = f"{prefix}{key}"
+        if OmegaConf.select(train_cfg, path, default=_ABSENT) is None:
+            logger.debug(f"Model has no '{path}', ignoring it")
             continue
-        OmegaConf.update(expanded, path, value, merge=True)
-    return expanded
+        kept[key] = _prune_absent(value, train_cfg, f"{path}.")
+    return kept
 
 
 def _restore_locked_node(old_val, new_val):
@@ -245,6 +244,7 @@ def resolve_and_merge_configs(
     config: DictConfig | str | Path,
     config_overrides: DictConfig | dict | list[str] | str | Path | None = None,
     inference: bool = False,
+    runtime_overrides: DictConfig | dict | None = None,
 ) -> DictConfig:
     """Load a config and merge overrides on top of it.
 
@@ -252,14 +252,12 @@ def resolve_and_merge_configs(
     `.hydra/config.yaml`), or a path to a YAML file. Overrides can be a `DictConfig`, a
     plain dict, a dotlist of 'key=value' strings, or a path to a YAML file.
 
-    With `inference`, the packaged `inference.yaml` is merged in first, so a checkpoint's
-    training values for the runtime parameters give way to inference-appropriate ones
-    before the caller's overrides are applied. Keys in `_EXPERIMENT_LOCKED_KEYS` are then
-    restored from the base config, so no override can pair a checkpoint with a feature
-    setup or an architecture it was not trained on.
-
-    Every layer may address a runtime parameter by its flat name from `RUNTIME_KEYS`
-    instead of its position in the config tree.
+    With `inference`, `_INFERENCE_DEFAULTS` is merged in first, so a checkpoint's training
+    values for the runtime parameters give way to inference-appropriate ones before the
+    caller's overrides are applied. `runtime_overrides` holds the throughput arguments of
+    `BacLCT.track()` and is applied last, above `config_overrides`. Keys in
+    `_EXPERIMENT_LOCKED_KEYS` are then restored from the base config, so no override can
+    pair a checkpoint with a feature setup or an architecture it was not trained on.
     """
     assert config is not None, "Please provide a proper config or path. Received `None`."
 
@@ -276,11 +274,11 @@ def resolve_and_merge_configs(
 
     layers = []
     if inference:
-        inference_cfg = OmegaConf.load(INFERENCE_CONFIG)
-        assert isinstance(inference_cfg, DictConfig)
-        layers.append(inference_cfg)
+        layers.append(OmegaConf.create(_INFERENCE_DEFAULTS))
     if config_overrides is not None:
         layers.append(_as_dictconfig(config_overrides))
+    if runtime_overrides:
+        layers.append(_as_dictconfig(runtime_overrides))
     if not layers:
         return cfg
 
@@ -289,7 +287,7 @@ def resolve_and_merge_configs(
     # can introduce new top-level keys (checkpoint, device)
     OmegaConf.set_struct(cfg, False)
     for layer in layers:
-        cfg = OmegaConf.merge(cfg, _expand_runtime_keys(layer, train_cfg))
+        cfg = OmegaConf.merge(cfg, _drop_absent_branches(layer, train_cfg))
     assert isinstance(cfg, DictConfig)
 
     for key in _EXPERIMENT_LOCKED_KEYS:

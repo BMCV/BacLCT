@@ -1,4 +1,8 @@
-"""BacLCT CLI Entrypoints."""
+"""BacLCT: bacteria tracking and life cycle state classification.
+
+Exposes `BacLCT`, the entry point for tracking and training, and sets the process-wide
+defaults (thread caps, OmegaConf resolvers) every entry point relies on.
+"""
 
 from __future__ import annotations
 

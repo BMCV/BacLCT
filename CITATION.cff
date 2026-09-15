@@ -2,8 +2,8 @@ cff-version: 1.2.0
 title: "BacLCT: Bacteria Life Cycle Tracking"
 message: "If you use this software, please cite the paper below."
 type: software
-version: 0.4.0
-date-released: "2026-08-26"
+version: 0.4.1
+date-released: "2026-09-15"
 authors:
   - given-names: Moritz
     family-names: Kunzmann
@@ -15,8 +15,8 @@ abstract: >-
   BacLCT tracks bacteria in time-lapse microscopy and, optionally, classifies their life
   cycle states. Segmented cells become nodes of a temporal graph, a message-passing graph
   neural network classifies each candidate edge as correspondence, division, or no
-  correspondence and each node as a life cycle state, and a LAP-based tracker resolves
-  them into lineages.
+  correspondence and each node as a life cycle state, and a tracker resolves them into
+  lineages.
 keywords:
   - cell tracking
   - time-lapse microscopy

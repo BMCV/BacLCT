@@ -10,10 +10,10 @@ center_name: center
 # other options: ("bbox", 2), median_size, 128, ${estimated_size}
 input_size_img: bbox
 input_size_enc: 224
-batch_size: 256
+batch_size: 128
 
 # workers crop, resize and weight patches while the encoder runs
-num_workers: 4
+num_workers: 2
 cells_per_item: 128
 prefetch_factor: 2
 

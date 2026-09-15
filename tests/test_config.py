@@ -84,15 +84,13 @@ def experiment_cfg():
     [
         ("batch_size", 512),
         ("num_workers", 2),
-        ("cells_per_item", 64),
-        ("prefetch_factor", 4),
     ],
 )
 def test_runtime_params_override_locked_extractor(experiment_cfg, key, value):
     """Runtime parameters reach the extractor even though it is experiment-locked.
 
-    `num_workers`/`cells_per_item`/`prefetch_factor` are absent from configs saved before
-    they existed, so the override has to introduce the key, not just change it.
+    `num_workers` is absent from configs saved before it existed, so the override has to
+    create the missing key.
     """
     merged = resolve_and_merge_configs(
         experiment_cfg, {"features": {"deep": {key: value}}}
@@ -140,17 +138,26 @@ def test_locked_keys_untouched_without_override(experiment_cfg):
 
 
 def test_inference_defaults_apply_and_yield_to_overrides(experiment_cfg):
-    """The inference overlay replaces training throughput values, overrides beat both."""
+    """The inference overlay replaces training throughput values, overrides beat both.
+
+    Only the parameters `track()` does not expose are in the overlay. The exposed ones
+    arrive as its runtime layer instead.
+    """
     defaults_only = resolve_and_merge_configs(experiment_cfg, inference=True)
     assert defaults_only.data.num_workers == 0
-    assert defaults_only.data.handcrafted_feature_extractor.n_jobs == 1
+    assert defaults_only.features.edges.n_jobs == 1
+    assert "batch_size" not in defaults_only.data
 
     overridden = resolve_and_merge_configs(
-        experiment_cfg, {"data": {"num_workers": 4}}, inference=True
+        experiment_cfg,
+        {"data": {"num_workers": 4}, "features": {"edges": {"n_jobs": 8}}},
+        inference=True,
+        runtime_overrides={"data": {"batch_size": 1}},
     )
     assert overridden.data.num_workers == 4
-    # untouched keys keep the inference default rather than the training value
     assert overridden.data.batch_size == 1
+    # the unexposed parameters stay reachable for on-the-fly edge finding
+    assert overridden.features.edges.n_jobs == 8
 
 
 def test_inference_defaults_keep_extractor_interpolation(experiment_cfg):
@@ -159,55 +166,73 @@ def test_inference_defaults_keep_extractor_interpolation(experiment_cfg):
     Merging into `data.handcrafted_feature_extractor` directly would replace the
     interpolation with a literal copy, silently detaching it from `features.handcrafted`.
     """
-    merged = resolve_and_merge_configs(experiment_cfg, inference=True)
+    merged = resolve_and_merge_configs(
+        experiment_cfg,
+        inference=True,
+        runtime_overrides={"features": {"handcrafted": {"n_jobs": 1}}},
+    )
     raw = OmegaConf.to_container(merged, resolve=False)
     assert raw["data"]["handcrafted_feature_extractor"] == "${features.handcrafted}"
     assert merged.features.handcrafted.n_jobs == 1
 
 
-def test_flat_runtime_keys_reach_their_config_paths(experiment_cfg):
-    """A runtime parameter can be set by name, without knowing where it lives."""
+def test_runtime_overrides_win_over_config_overrides(experiment_cfg):
+    """`track()`'s throughput arguments are explicit, so they beat a config layer."""
     merged = resolve_and_merge_configs(
         experiment_cfg,
-        {"num_jobs_features": 4, "num_workers_encode": 0, "num_workers_predict": 2},
+        {"features": {"handcrafted": {"n_jobs": 4}}, "data": {"batch_size": 8}},
         inference=True,
+        runtime_overrides={"features": {"handcrafted": {"n_jobs": 2}}},
     )
 
-    assert merged.features.handcrafted.n_jobs == 4
-    assert merged.features.deep.num_workers == 0
-    assert merged.data.num_workers == 2
-    # the flat name is consumed, not left behind as a stray top-level key
-    assert "num_jobs_features" not in merged
+    assert merged.features.handcrafted.n_jobs == 2
+    # a key the runtime layer does not carry is left to the config layer
+    assert merged.data.batch_size == 8
 
 
 def test_overrides_from_a_yaml_path(experiment_cfg, tmp_path):
     """A path is loaded as an override layer, so a user config file can be passed."""
     config_file = tmp_path / "config.yaml"
-    config_file.write_text("num_jobs_features: 4\ndata:\n  batch_size: 8\n")
+    config_file.write_text("data:\n  batch_size: 8\n  num_workers: 3\n")
 
     merged = resolve_and_merge_configs(experiment_cfg, config_file, inference=True)
-    assert merged.features.handcrafted.n_jobs == 4
     assert merged.data.batch_size == 8
+    assert merged.data.num_workers == 3
 
     with pytest.raises(FileNotFoundError):
         resolve_and_merge_configs(experiment_cfg, tmp_path / "missing.yaml")
 
 
-def test_flat_runtime_keys_skip_a_component_the_model_lacks(experiment_cfg):
+def test_overrides_set_a_null_leaf(experiment_cfg):
+    """Only whole sub-configs are pruned, so a null scalar is still overridable.
+
+    `device` and `checkpoint` are null in a trained config and are set exactly this way.
+    """
+    merged = resolve_and_merge_configs(
+        experiment_cfg, {"device": "cpu", "checkpoint": "best"}, inference=True
+    )
+
+    assert merged.device == "cpu"
+    assert merged.checkpoint == "best"
+
+
+def test_overrides_skip_a_component_the_model_lacks(experiment_cfg):
     """A model trained without deep features must not gain a half-built extractor.
 
-    `features=handcrafted_only` records `features.deep: null`, and the overlay sets
-    `num_workers_encode`, which merging onto that node would revive as a partial config.
+    `features=handcrafted_only` records `features.deep: null`, and `_worker_plan` sets
+    `num_workers` on it, which merging would revive as a partial config.
     """
+    from baclct.api import _worker_plan
+
     experiment_cfg.features.deep = None
 
     merged = resolve_and_merge_configs(
-        experiment_cfg, {"num_workers_encode": 4}, inference=True
+        experiment_cfg, inference=True, runtime_overrides=_worker_plan(4)
     )
     assert merged.features.deep is None
     assert merged.data.deep_feature_extractor is None
     # the parameters the model does have still apply
-    assert merged.features.handcrafted.n_jobs == 1
+    assert merged.features.handcrafted.n_jobs == 4
 
 
 def test_compose_package_config_restores_global_hydra():

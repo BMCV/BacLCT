@@ -1,4 +1,4 @@
-"""Hydra CLI entry point for training the BacLCT."""
+"""Hydra CLI entry point for training a BacLCT model."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def main(cfg: DictConfig):
     Hydra entry point (`baclct-train`). Composes the full config from
     `config/default.yaml` plus CLI overrides, then runs the Lightning training loop via
     `BacLCT.run_training`. At minimum, `dataset` and `task` must be specified (e.g.,
-    `dataset=spores task=tracking_with_classification`). These can also be set in a
-    global experiment config (e.g., `experiment=full`).
+    `dataset=spores task=tracking_with_states`). These can also be set in a global
+    experiment config (e.g., `experiment=full`).
 
     After training, a `best.ckpt` symlink is created in the checkpoints directory.
     Training is bare-bone: it runs the loop and returns nothing, and errors propagate.

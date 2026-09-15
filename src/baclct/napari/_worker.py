@@ -12,7 +12,7 @@ import queue
 import threading
 from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -23,6 +23,7 @@ from baclct.api import BacLCT
 from baclct.utils.progress import TrackingCancelled
 
 if TYPE_CHECKING:
+    import dask.array as da
     import polars as pl
 
 # fraction of the progress bar each stage occupies, in execution order. only used to keep
@@ -72,24 +73,24 @@ class ProgressEvent:
 class TrackParams:
     """Everything a tracking run needs, collected from the widget."""
 
-    images: np.ndarray
-    masks: np.ndarray
+    images: da.Array | np.ndarray
+    masks: da.Array | np.ndarray
     model: str | Path
     sequence_id: str = "pred"
     export_suffix: str | None = None
-    classify_states: bool | None = None
     graph_search_radius: int | str | None = None
     prune_edges_by: str | tuple[str, float | str] | None = None
-    tracker_overrides: dict[str, Any] = field(default_factory=dict)
+    thr_corr: float | None = None
+    thr_div: float | None = None
+    segmentation_correction: bool | None = None
     cache_dir: Path | Literal["temp"] | None = None
     output_dir: Path | None = None
     export_format: Literal["ctc", "flat"] = "flat"
     device: str | None = None
-    num_jobs: int = 1
-    num_workers_encode: int = 2
     num_workers: int = 0
     batch_size: int = 1
     patch_size: int | None = None
+    spacing: Any = None
 
 
 @dataclass
@@ -116,40 +117,32 @@ class CancelToken:
         return self._event.is_set()
 
 
-def _config_overrides(params: TrackParams) -> dict[str, Any]:
-    """Widget settings that reach the pipeline as config keys rather than arguments."""
-    overrides: dict[str, Any] = {
-        "num_workers_predict": params.num_workers,
-        "num_workers_encode": params.num_workers_encode,
-        "num_jobs_features": params.num_jobs,
-        "batch_size": params.batch_size,
-    }
-    if params.tracker_overrides:
-        overrides["tracker"] = dict(params.tracker_overrides)
-    return overrides
-
-
 def _run_track(params: TrackParams, progress, cancel: CancelToken) -> TrackResult:
     """Download the model if needed, then run tracking. Executes off the Qt thread."""
     model_dir = BacLCT.download_model(str(params.model), progress=progress)
     if cancel.cancelled:
         raise TrackingCancelled
 
-    pipeline = BacLCT(model_dir, config_overrides=_config_overrides(params))
+    pipeline = BacLCT(model_dir)
     masks_tracked, tracks = pipeline.track(
         images=params.images,
         masks=params.masks,
-        classify_states=params.classify_states,
         graph_search_radius=params.graph_search_radius,
         prune_edges_by=params.prune_edges_by,
-        patch_size=params.patch_size,
+        thr_corr=params.thr_corr,
+        thr_div=params.thr_div,
+        segmentation_correction=params.segmentation_correction,
         device=params.device,
+        cache_dir=params.cache_dir,
+        patch_size=params.patch_size,
+        batch_size=params.batch_size,
+        num_workers=params.num_workers,
         output_dir=params.output_dir,
         sequence_id=params.sequence_id,
         export_format=params.export_format,
         export_suffix=params.export_suffix,
-        cache_dir=params.cache_dir,
         progress=progress,
+        spacing=params.spacing,
     )
     return TrackResult(tracks=tracks, masks_tracked=masks_tracked)
 

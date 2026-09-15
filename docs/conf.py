@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import os
+from importlib.metadata import version as _distribution_version
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+# napari, magicgui and qtpy import Qt at module level, and RTD and CI have no display
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 project = "BacLCT"
 author = "Moritz Kunzmann"
+copyright = "2026, Moritz Kunzmann"
+release = _distribution_version("baclct")
+version = release
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -17,7 +21,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints",
-    "myst_parser",
+    "sphinx_design",
 ]
 
 autosummary_generate = True
@@ -35,44 +39,6 @@ typehints_defaults = "comma"
 typehints_use_signature = False
 typehints_use_signature_return = True
 always_use_bars_union = True
-
-# allow local builds without the full runtime stack installed; autodoc only
-# needs to import modules far enough to read signatures and docstrings. the
-# baclct env (linux-64 via pixi) has all of these natively, so listing them
-# here only matters for previews on machines without the runtime deps.
-autodoc_mock_imports = [
-    "torch",
-    "torchvision",
-    "torch_geometric",
-    "lightning",
-    "torchmetrics",
-    "tensorboard",
-    "polars",
-    "numpy",
-    "pyarrow",
-    "rustworkx",
-    "dask",
-    "scipy",
-    "skimage",
-    "sklearn",
-    "fastremap",
-    "joblib",
-    "networkx",
-    "tifffile",
-    "tqdm",
-    "yaml",
-    "hydra",
-    "omegaconf",
-    "matplotlib",
-    "seaborn",
-    "cmap",
-    "ctc_metrics",
-    # napari stack, which the docs env does not install
-    "napari",
-    "magicgui",
-    "qtpy",
-    "superqt",
-]
 
 napoleon_google_docstring = True
 napoleon_numpy_docstring = False

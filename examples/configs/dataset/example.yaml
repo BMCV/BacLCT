@@ -1,0 +1,58 @@
+# @package _global_
+
+# Example dataset config, overriding the dataset-specific parameters. Copy it into the
+# packaged dataset group, adapt it here, and select it by name:
+#   cp examples/configs/dataset/example.yaml src/baclct/config/dataset/example.yaml
+#   baclct-train dataset=example task=tracking fold=0
+#
+# Without a clone (e.g. `pip install "baclct[train]"`), keep this file in a `dataset/`
+# subdirectory and point Hydra at its parent directory instead:
+#   baclct-train --config-dir examples/configs dataset=example task=tracking fold=0
+#
+# Data is read from `paths.data_dir` in CTC format.
+
+paths:
+  data_dir: ./data/example
+  feature_dir: ./features/example
+
+data:
+  segmentation_name: GT
+  data_format: ctc
+
+  # largest displacement between two consecutive frames, in px or relative to cell size
+  graph_search_radius: 2x
+
+  batch_size: 4
+  num_workers: 8
+  num_workers_val: 8
+
+  # tile large fields of view instead of building one whole-frame graph
+  use_patches: false
+  # patch_size: 128 # only needed for dense videos or large images
+
+features:
+  edges:
+    # 'ellipse' emphasizes movement along the long axis of rod-shaped cells, `null` keeps
+    # the search radius as the only limit
+    prune_edges_by: ellipse
+
+hidden_dim: 128
+model:
+  lr: 3e-4
+  graph_model:
+    hidden_node_dim: ${hidden_dim}
+    hidden_edge_dim: ${hidden_dim}
+
+trainer:
+  max_epochs: 360
+
+dataset_name: example
+
+# train on several datasets at once, sharing one set of graph parameters. each name must
+# resolve to a dataset config shipped with the package (e.g. spores, toiam)
+# included_datasets:
+#   - spores
+#   - toiam
+
+num_edge_classes: 3
+num_node_classes: null # number of life cycle states, or null for tracking only

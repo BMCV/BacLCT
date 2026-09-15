@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import gc
 import json
+import logging
 import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import dask.array as da
 import numpy as np
 import polars as pl
 import pytest
@@ -18,7 +20,13 @@ from polars.testing import assert_frame_equal
 from torch.utils.data import ConcatDataset
 from torch_geometric.data import Data
 
-from baclct.data.dataset import GraphDataset, GraphPatchDataset, TrackingDataset
+from baclct.data import dataset as dataset_module
+from baclct.data.dataset import (
+    GraphDataset,
+    GraphPatchDataset,
+    TrackingDataset,
+    _warn_deep_worker_layout,
+)
 from baclct.features.extractors import CellLevelExtractor, HandcraftedExtractor
 from baclct.features.graph import EdgeFinder
 from baclct.utils import feature_info as fi
@@ -720,6 +728,31 @@ def test_prepare_data_with_dynamic_graph_properties(
     assert datamodule.dataset_val[0].num_edges > 0
 
 
+def test_prepare_data_closes_worker_pool_once_for_the_whole_run(
+    tmp_path, monkeypatch, toy_handcrafted_features, toy_masks
+):
+    """The loky pool is released once after the whole sequence loop.
+
+    Closing it inside the per-sequence extractor call (the old behaviour) would force a
+    fresh worker pool for every one of possibly ~100 sequences. A sweep over real
+    sequences (`final-review/throughput/run_chain.py`) measured this costing roughly half
+    the per-sequence `features` stage. `TrackingDataset.prepare_data()` now closes it
+    itself, once, after the whole sequence loop.
+    """
+    calls = []
+    monkeypatch.setattr(
+        "baclct.data.dataset.close_worker_pool", lambda: calls.append(None)
+    )
+
+    sequences = {"train": ["seq1"], "val": ["seq2"], "test": ["seq3"]}
+    datamodule = create_mock_datamodule(
+        tmp_path, sequences, toy_handcrafted_features, toy_masks
+    )
+    datamodule.prepare_data()
+
+    assert len(calls) == 1
+
+
 def test_resolve_param_and_time_steps():
     """_resolve_param expands int, (min, max), and (min, max, step) specs."""
     # bare instance: these methods only read the attributes set below
@@ -1051,10 +1084,11 @@ def test_from_images_and_masks_temp_cache(toy_images, toy_masks, basic_extractor
     assert dataset._feature_tempdir is not None
     cache_root = Path(dataset._feature_tempdir.name)
     assert isinstance(dataset.edge_data, pl.LazyFrame)
-    # node features and the percentiles are cached alongside the edges
+    # node features are cached alongside the edges
     hc_dir = cache_root / "toy" / "seg"
     assert (hc_dir / "nodes.parquet").exists()
-    assert (hc_dir / "percentiles.json").exists()
+    # no intensity prop and no deep extractor, so the percentile pass is skipped
+    assert not (hc_dir / "percentiles.json").exists()
 
     # items still assemble from the lazily scanned store
     assert dataset[1] is not None
@@ -1062,6 +1096,71 @@ def test_from_images_and_masks_temp_cache(toy_images, toy_masks, basic_extractor
     del dataset
     gc.collect()
     assert not cache_root.exists()
+
+
+def test_warn_deep_worker_layout(monkeypatch, caplog):
+    """Only a layout that actually costs the crop workers something is warned about."""
+    monkeypatch.setattr(dataset_module, "_LARGE_IMAGE_STACK_BYTES", 4 * 8 * 8 * 4 - 1)
+    eager = np.zeros((4, 8, 8), dtype=np.float32)
+    coarse = da.zeros((4, 8, 8), chunks=(4, 8, 8), dtype=np.float32)
+    per_frame = da.zeros((4, 8, 8), chunks=(1, 8, 8), dtype=np.float32)
+
+    with caplog.at_level(logging.WARNING):
+        # a coarser chunk means every crop worker item decodes more than it needs, and an
+        # in-memory stack over the threshold is copied into every worker
+        _warn_deep_worker_layout(coarse, num_workers=2)
+        assert "instead of one frame per chunk" in caplog.text
+        _warn_deep_worker_layout(eager, num_workers=2)
+        assert "will be pickled into each" in caplog.text
+
+        caplog.clear()
+        _warn_deep_worker_layout(per_frame, num_workers=2)
+        # serial cropping never reaches a worker, so no layout is worth a warning
+        _warn_deep_worker_layout(eager, num_workers=0)
+        _warn_deep_worker_layout(coarse, num_workers=0)
+        assert caplog.text == ""
+
+
+def test_mask_only_sequence_builds(tmp_path, toy_masks, basic_extractors):
+    """A shape-only model builds from masks alone, without images on disk."""
+    edge_finder, hc_extractor = basic_extractors
+    data_dir, feature_dir = prepare_dataset_structure(
+        tmp_path, {"masks_only": {"masks": toy_masks}}
+    )
+    # the fixture stands in zero images for the loaders that still need them
+    for stray in (data_dir / "masks_only").glob("*.tif"):
+        stray.unlink()
+
+    dataset = GraphDataset(
+        data_dir=data_dir,
+        feature_dir=feature_dir,
+        sequence_id="masks_only",
+        data_format="ctc",
+        img_name=None,
+        segmentation_name="GT",
+        edge_finder=edge_finder,
+        handcrafted_feature_extractor=hc_extractor,
+        deep_feature_extractor=None,
+        graph_search_radius=50,
+        graph_num_steps=1,
+    )
+
+    assert dataset.images is None
+    assert dataset[1] is not None
+
+
+def test_unmatched_lineage_label_keeps_other_annotations(basic_extractors):
+    """One label without a node drops that row, not every node's annotation."""
+    _, hc_extractor = basic_extractors
+    features = pl.DataFrame({"label": [1, 2], "t": [0, 0], "area": [10.0, 12.0]})
+    lineage = pl.DataFrame(
+        {"label": [1, 2, 99], "t": [0, 0, 0], "parent": [0, 1, 0], "state": [1, 2, 1]}
+    )
+
+    out = hc_extractor._check_and_add_lineage_information(features, lineage)
+
+    assert out.height == 2
+    assert out["state"].to_list() == [1, 2]
 
 
 def test_persistent_cache_invalidates_on_different_masks(

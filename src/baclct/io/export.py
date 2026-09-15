@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os.path
 from collections import defaultdict
 from pathlib import Path
 
@@ -18,6 +19,33 @@ from baclct.utils.spacing import position_columns
 logger = get_pylogger(__name__)
 
 _TRACK_RENAMES = {"label_track": "label", "parent_track": "parent"}
+
+# what a sequence id is extended by when the caller names no suffix of its own. '_RES' is
+# the CTC convention for a result directory, and keeps an export from landing on the
+# sequence directory it was tracked from
+DEFAULT_EXPORT_SUFFIX = {"flat": "_tracks", "ctc": "_RES"}
+
+
+def resolve_export_suffix(export_suffix: str | None, export_format: str) -> str:
+    """The suffix an export uses, where `None` takes the default of its format.
+
+    An explicit empty string is kept, so a caller can ask for results named after the
+    sequence id alone.
+    """
+    if export_suffix is not None:
+        return export_suffix
+    return DEFAULT_EXPORT_SUFFIX[export_format]
+
+
+def shared_prefix(left: str, right: str) -> str | None:
+    """What two names start with, or `None` when that is too little to name a run by.
+
+    The one rule the sequence id follows wherever a run is named from a pair: the two
+    paths of the CLI ('01_images.tif' beside '01_masks.tif' gives '01') and the two layer
+    names of the napari plugin ('01 images' beside '01 masks' gives the same '01').
+    """
+    shared = os.path.commonprefix([left, right]).rstrip("_-. ")
+    return shared if len(shared) > 1 else None
 
 
 def _predicted_state() -> pl.Expr:
@@ -226,7 +254,7 @@ def export_tracking_results_simple(
     masks_tracked: np.ndarray,
     sequence_id: str,
     output_dir: Path,
-    suffix: str = "_tracks",
+    suffix: str = DEFAULT_EXPORT_SUFFIX["flat"],
 ) -> tuple[pl.DataFrame, np.ndarray]:
     """Save tracking results as a flat CSV and a deflate-compressed TIF.
 

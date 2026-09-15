@@ -32,6 +32,10 @@ data:
   sampling_floor: 0.05 # spores contributes many short sequences
   sampling_size_measure: cells
 
+features:
+  handcrafted:
+    n_jobs: 8
+
 hidden_dim: 128
 model:
   graph_model:

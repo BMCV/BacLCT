@@ -9,6 +9,8 @@ medial-axis midpoint, which differs slightly for strongly bent cells.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import polars as pl
 from skimage.measure import find_contours, regionprops_table
@@ -17,12 +19,13 @@ from skimage.morphology import isotropic_dilation
 from baclct.features.graph import DILATED_OVERLAP_RADIUS_MULTIPLIER
 from baclct.utils.graph_params import resolve_search_radius
 
-# dilated_overlap takes its dilation radius from a per-cell column rather than a factor.
-# only 'thickness' can be recomputed from the mask alone, which is all the preview has
+if TYPE_CHECKING:
+    import dask.array as da
+
+# dilated_overlap takes its dilation radius from a per-cell column. by default uses
+# "thickness" (which works well for elongated objects and rod-shaped bacteria)
 PREVIEWABLE_PRUNE_COLUMNS = ("thickness",)
 
-# the search radius and the tighter pruned region get distinct colors so pruning is
-# visible even where the two regions are close in size
 SEARCH_COLOR = "yellow"
 PRUNE_COLOR = "cyan"
 
@@ -35,15 +38,17 @@ _PREVIEW_PROPS = (
 )
 
 
-def _first_nonempty_frame(masks: np.ndarray) -> int:
+def _first_nonempty_frame(masks: da.Array | np.ndarray) -> int:
     """Index of the first frame that contains any labelled cell."""
     for t, frame in enumerate(masks):
-        if frame.any():
+        if np.asarray(frame).any():
             return t
     raise ValueError("Segmentation contains no labelled cells.")
 
 
-def resolve_radius_px(masks: np.ndarray, graph_search_radius: int | str) -> int:
+def resolve_radius_px(
+    masks: da.Array | np.ndarray, graph_search_radius: int | str
+) -> int:
     """Resolve a search radius spec to pixels, as the dataset does.
 
     Args:
@@ -58,7 +63,7 @@ def resolve_radius_px(masks: np.ndarray, graph_search_radius: int | str) -> int:
         return int(graph_search_radius)
 
     t = _first_nonempty_frame(masks)
-    props = regionprops_table(masks[t], properties=("axis_major_length",))
+    props = regionprops_table(np.asarray(masks[t]), properties=("axis_major_length",))
     node_feats = pl.DataFrame(
         {
             "t": np.full(len(props["axis_major_length"]), t),
@@ -124,7 +129,7 @@ def _dilation_radius(cell: np.ndarray, param: float | str) -> float:
 
 
 def radius_preview_shapes(
-    masks: np.ndarray,
+    masks: da.Array | np.ndarray,
     t: int,
     radius_px: int,
     prune_edges_by: tuple[str, float | str] | None = None,
@@ -150,11 +155,12 @@ def radius_preview_shapes(
     Raises:
         ValueError: If `label` is given but no cell carries it in this frame.
     """
-    props = regionprops_table(masks[t], properties=_PREVIEW_PROPS)
+    frame = np.asarray(masks[t])
+    props = regionprops_table(frame, properties=_PREVIEW_PROPS)
     if len(props["label"]) == 0:
         return [], [], []
 
-    i = _select_cell(props, masks[t].shape, label)
+    i = _select_cell(props, frame.shape, label)
     method, param = prune_edges_by or (None, 0.0)
     centroid = np.array([props["centroid-0"][i], props["centroid-1"][i]])
 
@@ -184,7 +190,7 @@ def radius_preview_shapes(
         colors.append(PRUNE_COLOR)
     elif method in ("overlap", "dilated_overlap"):
         # 'overlap' links intersecting masks, so its region is the mask itself
-        cell = masks[t] == int(props["label"][i])
+        cell = frame == int(props["label"][i])
         radius = 0.0 if method == "overlap" else _dilation_radius(cell, param)
         region = isotropic_dilation(cell, radius) if radius else cell
         contours = find_contours(region.astype(float), 0.5)

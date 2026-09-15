@@ -242,3 +242,9 @@ uv.lock
 
 # macOS
 .DS_Store
+
+# dev-only checkpoint regression guard: needs the dev machine's datasets and models
+/tests/test_regression_e2e.py
+/tests/_regression_support.py
+/tests/_regression_worker.py
+/tests/assets/regression_e2e.json

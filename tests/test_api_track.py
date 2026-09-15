@@ -18,7 +18,7 @@ from conftest import xfail_on_mps
 from omegaconf import OmegaConf
 from polars.testing import assert_frame_equal
 
-from baclct.api import BacLCT
+from baclct.api import BacLCT, _worker_plan
 from baclct.data.dataset import GraphDataset
 from baclct.utils.progress import TrackingCancelled
 
@@ -108,29 +108,34 @@ class _Recorder:
 def test_track_reports_progress_and_applies_overrides(
     trained_run, toy_images, toy_masks, tmp_path
 ):
-    """Graph/tracker overrides reach the pipeline and progress is reported per stage."""
+    """Graph and tracker arguments reach the pipeline and progress is reported per stage.
+
+    `data.num_workers` is set here because this is the only test that pickles a real
+    `GraphDataset` into worker processes, so it holds the spawn/forkserver coverage.
+    """
     run_dir, checkpoint = trained_run
     progress = _Recorder()
 
-    overrides = {
-        "checkpoint": str(checkpoint),
-        "tracker": {"thr_corr": 0.9, "thr_div": 0.4},
-    }
+    overrides = {"checkpoint": str(checkpoint), "data": {"num_workers": 2}}
     pipeline = BacLCT(run_dir, config_overrides=overrides)
     masks_tracked, tracks = pipeline.track(
         images=toy_images,
         masks=toy_masks,
         graph_search_radius="2.5x",
         prune_edges_by=("ellipse", 1.5),
+        thr_corr=0.9,
+        thr_div=0.4,
         output_dir=tmp_path,
         sequence_id="toy",
         export_format="flat",
         progress=progress,
     )
 
-    # overrides must actually reach the tracker config and the graph, not be dropped
-    assert pipeline.cfg.tracker.thr_corr == 0.9
-    assert pipeline.cfg.tracker.thr_div == 0.4
+    # the thresholds are tracker arguments, so they show on the tracker and never in the
+    # merged config
+    tracker = pipeline.tracker
+    assert (tracker.thr_corr, tracker.thr_div) == (0.9, 0.4)
+    assert pipeline.cfg.data.num_workers == 2
     assert isinstance(pipeline.dataset, GraphDataset)
     # 2.5 times the median major axis of the first frame
     assert pipeline.dataset.graph_search_radius == 65
@@ -192,11 +197,12 @@ def test_track_cancellation_propagates(trained_run, toy_images, toy_masks, tmp_p
 @xfail_on_mps
 @pytest.mark.slow
 def test_track_cache_modes_agree(trained_run, toy_images, toy_masks):
-    """A temporary cache must produce the tracks of the in-memory default.
+    """The default temporary cache must produce the tracks of the in-memory mode.
 
-    The default builds all edges once and keeps them as a `DataFrame`, 'temp' reads them
-    back from a parquet store (forward-only, mirrored per item). Those are two different
-    code paths through `_get_graph_for_frame` and they must not move the numbers.
+    `cache_dir=None` builds all edges once and keeps them as a `DataFrame`, the default
+    'temp' reads them back from a parquet store (forward-only, mirrored per item). Those
+    are two different code paths through `_get_graph_for_frame` and they must not move the
+    numbers.
     """
     run_dir, checkpoint = trained_run
 
@@ -206,13 +212,13 @@ def test_track_cache_modes_agree(trained_run, toy_images, toy_masks):
         images=toy_images,
         masks=toy_masks,
         sequence_id="toy",
+        cache_dir=None,
     )
     pipeline = BacLCT(run_dir, config_overrides=overrides)
     _, tracks = pipeline.track(
         images=toy_images,
         masks=toy_masks,
         sequence_id="toy",
-        cache_dir="temp",
     )
 
     assert isinstance(baseline_pipeline.dataset, GraphDataset)
@@ -225,15 +231,10 @@ def test_track_cache_modes_agree(trained_run, toy_images, toy_masks):
 @xfail_on_mps
 @pytest.mark.slow
 def test_track_temp_cache_is_removed_with_the_dataset(trained_run, toy_images, toy_masks):
-    """A temporary cache must not outlive the pipeline that created it."""
+    """The default temporary cache must not outlive the pipeline that created it."""
     run_dir, checkpoint = trained_run
     pipeline = BacLCT(run_dir, config_overrides={"checkpoint": str(checkpoint)})
-    pipeline.track(
-        images=toy_images,
-        masks=toy_masks,
-        sequence_id="toy",
-        cache_dir="temp",
-    )
+    pipeline.track(images=toy_images, masks=toy_masks, sequence_id="toy")
 
     dataset = pipeline.dataset
     assert isinstance(dataset, GraphDataset)
@@ -250,57 +251,49 @@ def test_track_temp_cache_is_removed_with_the_dataset(trained_run, toy_images, t
 
 @xfail_on_mps
 @pytest.mark.slow
-@pytest.mark.parametrize("classify_states", [None, True])
 def test_track_states_follow_the_trained_model(
-    trained_run_with_states, toy_images, toy_masks, tmp_path, classify_states
+    trained_run_with_states, toy_images, toy_masks, tmp_path
 ):
-    """A model trained with node classes predicts states unless asked not to."""
+    """A model trained with node classes predicts states, with nothing to ask for."""
     pipeline = BacLCT(trained_run_with_states)
     _, tracks = pipeline.track(
-        toy_images,
-        toy_masks,
-        classify_states=classify_states,
-        sequence_id="01",
-        output_dir=tmp_path,
+        toy_images, toy_masks, sequence_id="01", output_dir=tmp_path
     )
 
     assert "state" in tracks.columns
     assert pipeline.node_preds is not None
-    assert (tmp_path / "01" / "res_states.csv").exists()
+    assert (tmp_path / "01_RES" / "res_states.csv").exists()
 
 
 @xfail_on_mps
 @pytest.mark.slow
-def test_track_states_can_be_switched_off(
-    trained_run_with_states, toy_images, toy_masks, tmp_path
+def test_track_states_absent_for_a_tracking_only_model(
+    trained_run, toy_images, toy_masks, tmp_path
 ):
-    """Disabling is honoured end to end: no column, no predictions, no export."""
-    pipeline = BacLCT(trained_run_with_states)
-    _, tracks = pipeline.track(
-        toy_images,
-        toy_masks,
-        classify_states=False,
-        sequence_id="01",
-        output_dir=tmp_path,
-    )
-
-    assert "state" not in tracks.columns
-    assert pipeline.node_preds is None
-    assert not (tmp_path / "01" / "res_states.csv").exists()
-
-
-@xfail_on_mps
-@pytest.mark.slow
-def test_track_states_ignored_for_a_tracking_only_model(
-    trained_run, toy_images, toy_masks, caplog
-):
-    """Asking a model that cannot classify states for them warns instead of failing."""
+    """A model without node classes yields no column, no predictions, and no export."""
     run_dir, _ = trained_run
     pipeline = BacLCT(run_dir)
     _, tracks = pipeline.track(
-        toy_images, toy_masks, classify_states=True, sequence_id="01"
+        toy_images, toy_masks, sequence_id="01", output_dir=tmp_path
     )
 
     assert "state" not in tracks.columns
     assert pipeline.node_preds is None
-    assert "not trained for node classification" in caplog.text
+    assert not (tmp_path / "01_RES" / "res_states.csv").exists()
+
+
+@pytest.mark.parametrize(
+    ("num_workers", "n_jobs", "encode"),
+    [(0, 1, 0), (4, 4, 2), (-1, -1, 2)],
+    ids=["serial", "parallel", "every_core"],
+)
+def test_worker_plan_derives_every_pool(num_workers, n_jobs, encode):
+    """Feature workers scale with the argument, the encoder is pinned at its optimum.
+
+    `-1` is joblib's "every core" and is passed through unbounded: no measured peak
+    justifies capping node extraction, so sizing the pool is left to the caller.
+    """
+    plan = _worker_plan(num_workers)
+
+    assert plan["features"]["handcrafted"]["n_jobs"] == n_jobs
+    assert plan["features"]["deep"]["num_workers"] == encode

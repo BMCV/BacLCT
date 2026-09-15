@@ -120,9 +120,9 @@ CUSTOM_NODE_PROPS: dict[str, Callable[..., Any]] = {
 def aspect_ratio(features: pl.DataFrame) -> pl.DataFrame:
     """Log ratio between major and minor axis length."""
     return features.with_columns(
-        # clip minor axis to 1 pixel minimum to avoid log(inf) for degenerate 1D masks
+        # clip both axes to 1.0, to prevent inf/nan for single-pixel regions
         aspect_ratio=(
-            pl.col("axis_major_length")
+            pl.col("axis_major_length").clip(lower_bound=1.0)
             / pl.col("axis_minor_length").clip(lower_bound=1.0)
         ).log()
     )
