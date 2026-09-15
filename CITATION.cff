@@ -3,7 +3,7 @@ title: "BacLCT: Bacteria Life Cycle Tracking"
 message: "If you use this software, please cite the paper below."
 type: software
 version: 0.4.1
-date-released: "2026-09-10"
+date-released: "2026-09-15"
 authors:
   - given-names: Moritz
     family-names: Kunzmann
